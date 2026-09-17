@@ -563,10 +563,17 @@ def display_all_history_data_info(df, stock_code):
                 print(f"  {col}: {value}")
 
 
-def save_all_history_stock_data(df, stock_code, save_dir="D:/lianghuajiaoyi/Kronos/examples/data"):
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(CURRENT_DIR, "data")
+
+
+def save_all_history_stock_data(df, stock_code, save_dir=None):
     """
     保存全历史股票数据到指定目录
     """
+    if save_dir is None:
+        save_dir = DEFAULT_DATA_DIR
+
     if df is not None and not df.empty:
         # 确保保存目录存在
         os.makedirs(save_dir, exist_ok=True)
@@ -597,7 +604,7 @@ def main_all_history(stock_code="002354"):
     主函数：获取并保存股票全历史数据
     """
     # 设置保存目录
-    save_directory = "D:/lianghuajiaoyi/Kronos/examples/data"
+    save_directory = DEFAULT_DATA_DIR
 
     print("=" * 60)
     print(f"开始获取股票 {stock_code} 的全部历史数据")

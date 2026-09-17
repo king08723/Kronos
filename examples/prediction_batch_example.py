@@ -39,11 +39,11 @@ def plot_prediction(kline_df, pred_df):
 
 
 # 1. Load Model and Tokenizer
-tokenizer = KronosTokenizer.from_pretrained('/home/csc/huggingface/Kronos-Tokenizer-base/')
-model = Kronos.from_pretrained("/home/csc/huggingface/Kronos-base/")
+tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
+model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
 
-# 2. Instantiate Predictor
-predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
+# 2. Instantiate Predictor (automatically detects mps/cuda/cpu when device=None)
+predictor = KronosPredictor(model, tokenizer, max_context=512)
 
 # 3. Prepare Data
 df = pd.read_csv("./data/XSHG_5min_600977.csv")
@@ -70,3 +70,10 @@ pred_df = predictor.predict_batch(
     y_timestamp_list=ytsp,
     pred_len=pred_len,
 )
+
+for i in range(len(pred_df)):
+    start_pos = i * 400
+    end_pos = start_pos + lookback + pred_len
+    full_kline_df = df.iloc[start_pos:end_pos].copy()
+    print(f"Showing plot for batch index {i}...")
+    plot_prediction(full_kline_df, pred_df[i])

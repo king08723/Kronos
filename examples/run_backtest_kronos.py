@@ -417,11 +417,12 @@ def main():
     主函数：运行Kronos模型回测
     """
     # 配置参数
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
     BACKTEST_CONFIG = {
         "stock_code": "000831",  # 要回测的股票代码
-        "data_dir": r"D:\lianghuajiaoyi\Kronos\examples\data",  # 历史数据目录
-        "model_dir": r"D:\lianghuajiaoyi\Kronos\examples\yuce",  # 模型预测结果目录
-        "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\backtest",  # 回测结果输出目录
+        "data_dir": os.path.join(CURRENT_DIR, "data"),  # 历史数据目录
+        "model_dir": os.path.join(CURRENT_DIR, "yuce"),  # 模型预测结果目录
+        "output_dir": os.path.join(CURRENT_DIR, "backtest"),  # 回测结果输出目录
         "initial_capital": 100000,  # 初始资金
         "threshold": 0.02  # 交易阈值（2%）
     }

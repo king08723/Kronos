@@ -336,10 +336,11 @@ class HistoricalBacktester:
 def main():
     """主函数"""
     # 配置参数
+    EXAMPLES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     BACKTEST_CONFIG = {
         "stock_code": "300418",
-        "data_dir": r"D:\lianghuajiaoyi\Kronos\examples\data",
-        "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\historical_backtest",
+        "data_dir": os.path.join(EXAMPLES_DIR, "data"),
+        "output_dir": os.path.join(EXAMPLES_DIR, "historical_backtest"),
         "initial_capital": 100000,
         "lookback_days": 60,  # 使用60天历史数据
         "pred_days": 30,  # 预测30天

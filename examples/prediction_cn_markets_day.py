@@ -25,13 +25,14 @@ import os
 import argparse
 import time
 import pandas as pd
-import akshare as ak
+import yfinance as yf
+import baostock as bs
 import matplotlib.pyplot as plt
 import sys
-sys.path.append("../")
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from model import Kronos, KronosTokenizer, KronosPredictor
 
-save_dir = "./outputs"
+save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 os.makedirs(save_dir, exist_ok=True)
 
 # Setting
@@ -41,71 +42,102 @@ DEVICE = "cpu"  # "cuda:0"
 MAX_CONTEXT = 512
 LOOKBACK = 400
 PRED_LEN = 120
-T = 1.0
-TOP_P = 0.9
+T = 0.3
+TOP_P = 0.8
 SAMPLE_COUNT = 1
 
 def load_data(symbol: str) -> pd.DataFrame:
-    print(f"📥 Fetching {symbol} daily data from akshare ...")
-
-    max_retries = 3
+    """
+    拉取 A 股日线历史数据。
+    支持 yfinance（代码格式如 000001.SZ 或 600000.SS），
+    若 yfinance 触发 Yahoo 限流 (429 Rate Limit) 或下载失败，自动降级至 baostock 直连国内通道。
+    """
     df = None
-
-    # Retry mechanism
-    for attempt in range(1, max_retries + 1):
-        try:
-            df = ak.stock_zh_a_hist(symbol=symbol, period="daily", adjust="")
-            if df is not None and not df.empty:
-                break
-        except Exception as e:
-            print(f"⚠️ Attempt {attempt}/{max_retries} failed: {e}")
-        time.sleep(1.5)
-
-    # If still empty after retries
-    if df is None or df.empty:
-        print(f"❌ Failed to fetch data for {symbol} after {max_retries} attempts. Exiting.")
-        sys.exit(1)
+    clean_sym = symbol.strip().upper()
     
-    df.rename(columns={
-        "日期": "date",
-        "开盘": "open",
-        "收盘": "close",
-        "最高": "high",
-        "最低": "low",
-        "成交量": "volume",
-        "成交额": "amount"
-    }, inplace=True)
+    # 标准化 yfinance 股票代码
+    if "." in clean_sym:
+        parts = clean_sym.split(".")
+        if parts[0] in ["SH", "SZ", "SS"]:
+            yf_symbol = f"{parts[1]}.{'SS' if parts[0] in ['SH', 'SS'] else 'SZ'}"
+        else:
+            yf_symbol = f"{parts[0]}.{'SS' if parts[1] in ['SH', 'SS'] else 'SZ'}"
+    else:
+        if clean_sym.startswith(("60", "68", "90")):
+            yf_symbol = f"{clean_sym}.SS"
+        else:
+            yf_symbol = f"{clean_sym}.SZ"
+
+    print(f"📥 Fetching {clean_sym} daily data from yfinance (ticker: {yf_symbol}, 前复权) ...")
+    try:
+        yf_df = yf.download(yf_symbol, period="3y", auto_adjust=True, progress=False)
+        if yf_df is not None and not yf_df.empty:
+            # 兼容 MultiIndex columns
+            if isinstance(yf_df.columns, pd.MultiIndex):
+                yf_df.columns = yf_df.columns.get_level_values(0)
+            yf_df = yf_df.reset_index()
+            yf_df.rename(columns={
+                "Date": "date",
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Volume": "volume"
+            }, inplace=True)
+            if "date" in yf_df.columns and len(yf_df) > 0:
+                df = yf_df
+                print(f"✅ Successfully fetched data from yfinance (前复权): {len(df)} records")
+    except Exception as e:
+        print(f"⚠️ yfinance fetch failed: {e}")
+
+    # 若 yfinance 限流 (Rate Limit) 或无数据，降级至 baostock 直连国内获取
+    if df is None or df.empty or len(df) < LOOKBACK:
+        print(f"🔄 Switching to baostock for reliable domestic data (前复权) ...")
+        # 标准化 baostock 股票代码 (sh.600000 / sz.000001)
+        raw_code = clean_sym.split(".")[0] if not clean_sym.startswith(("SH", "SZ")) else clean_sym.split(".")[1]
+        bs_code = f"sh.{raw_code}" if raw_code.startswith(("60", "68", "90")) else f"sz.{raw_code}"
+        
+        lg = bs.login()
+        if lg.error_code == '0':
+            # adjustflag="2" 表示前复权 (1: 后复权, 2: 前复权, 3: 不复权)
+            rs = bs.query_history_k_data_plus(
+                bs_code,
+                "date,open,high,low,close,volume,amount",
+                start_date="2022-01-01",
+                frequency="d",
+                adjustflag="2"
+            )
+            if rs.error_code == '0':
+                df = rs.get_data()
+            bs.logout()
+
+    if df is None or df.empty:
+        print(f"❌ Failed to fetch data for {symbol}. Exiting.")
+        sys.exit(1)
 
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").reset_index(drop=True)
 
-    # Convert numeric columns
-    numeric_cols = ["open", "high", "low", "close", "volume", "amount"]
-    for col in numeric_cols:
-        df[col] = (
-            df[col]
-            .astype(str)
-            .str.replace(",", "", regex=False)
-            .replace({"--": None, "": None})
-        )
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    # 统一转换数值列
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Fix invalid open values
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    else:
+        df["amount"] = df["close"] * df["volume"]
+
+    # 补充无效数据
     open_bad = (df["open"] == 0) | (df["open"].isna())
     if open_bad.any():
-        print(f"⚠️  Fixed {open_bad.sum()} invalid open values.")
         df.loc[open_bad, "open"] = df["close"].shift(1)
         df["open"].fillna(df["close"], inplace=True)
 
-    # Fix missing amount
     if df["amount"].isna().all() or (df["amount"] == 0).all():
         df["amount"] = df["close"] * df["volume"]
 
-    print(f"✅ Data loaded: {len(df)} rows, range: {df['date'].min()} ~ {df['date'].max()}")
-
-    print("Data Head:")
-    print(df.head())
-
+    print(f"✅ Data ready: {len(df)} rows, range: {df['date'].min().strftime('%Y-%m-%d')} ~ {df['date'].max().strftime('%Y-%m-%d')}")
     return df
 
 
@@ -152,6 +184,7 @@ def plot_result(df_hist, df_pred, symbol):
     plt.tight_layout()
     plot_path = os.path.join(save_dir, f"pred_{symbol.replace('.', '_')}_chart.png")
     plt.savefig(plot_path)
+    plt.show()
     plt.close()
     print(f"📊 Chart saved: {plot_path}")
 
@@ -200,7 +233,7 @@ def predict_future(symbol):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kronos stock prediction script")
-    parser.add_argument("--symbol", type=str, default="000001", help="Stock code")
+    parser.add_argument("--symbol", type=str, default="002594.SZ", help="Stock code")
     args = parser.parse_args()
 
     predict_future(

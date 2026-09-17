@@ -539,11 +539,19 @@ def display_data_info(df, stock_code, start_year, end_year):
             else:
                 print(f"  {col}: {value}")
 
+# 定义默认保存目录 /Users/jyy/Documents/github_projects/Kronos/examples/data
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(CURRENT_DIR, "data")
 
-def save_stock_data(df, stock_code, save_dir="D:/lianghuajiaoyi/Kronos/examples/data"):
+
+
+def save_stock_data(df, stock_code, save_dir=None):
     """
     保存股票数据到指定目录
     """
+    if save_dir is None:
+        save_dir = DEFAULT_DATA_DIR
+
     if df is not None and not df.empty:
         # 确保保存目录存在
         os.makedirs(save_dir, exist_ok=True)
@@ -565,7 +573,7 @@ def main(stock_code="002354", start_year=2024, end_year=2025):
     主函数：获取并保存股票数据 - 最终版
     """
     # 设置保存目录
-    save_directory = "D:/lianghuajiaoyi/Kronos/examples/data"
+    save_directory = DEFAULT_DATA_DIR
 
     print("=" * 60)
     print(f"开始获取股票 {stock_code} 的 {start_year}-{end_year} 年数据")

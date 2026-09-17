@@ -1,5 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import numpy as np
 import sys
 import os
@@ -12,8 +13,13 @@ warnings.filterwarnings('ignore')
 sys.path.append("../")
 from model import Kronos, KronosTokenizer, KronosPredictor
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+# 设置中文字体（跨平台兼容 macOS、Windows、Linux）
+plt.rcParams['font.sans-serif'] = [
+    'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'STHeiti',  # macOS
+    'SimHei', 'Microsoft YaHei',  # Windows
+    'WenQuanYi Micro Hei', 'Noto Sans CJK SC',  # Linux
+    'sans-serif'
+]
 plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
 
 
@@ -150,18 +156,9 @@ def generate_future_dates_with_holidays(last_date, pred_len):
 
 
 def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="002354", stock_name="股票", pred_len=100,
-                                 output_dir="."):
+                                 output_dir=".", sample_paths=None):
     """
-    绘制详细的预测结果图表 - 优化版，图表更大更清晰
-
-    参数:
-    kline_df: 历史K线数据
-    pred_df: 预测数据
-    future_dates: 未来日期列表
-    stock_code: 股票代码
-    stock_name: 股票名称
-    pred_len: 预测期数
-    output_dir: 输出目录
+    绘制详细的预测结果图表 - 支持蒙特卡洛多路径与扇形置信区间 (Confidence Ribbon)
     """
     # 确保输出目录存在
     ensure_output_directory(output_dir)
@@ -190,6 +187,27 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     close_df = pd.concat([sr_close, sr_pred_close], axis=1)
     volume_df = pd.concat([sr_volume, sr_pred_volume], axis=1)
 
+    hist_close = close_df['历史数据'].dropna()
+    pred_close = close_df['预测数据'].dropna()
+    hist_volume = volume_df['历史数据'].dropna()
+    pred_volumes = volume_df['预测数据'].dropna()
+
+    # 准备完整的OHLCV数据集（按时间排序），用于鼠标点击时精确定位与数据提取
+    hist_records = kline_df.copy()
+    hist_records['timestamps'] = pd.to_datetime(hist_records['timestamps'])
+    hist_records = hist_records.set_index('timestamps')
+    hist_records['data_type'] = '历史'
+
+    pred_records = pred_df.copy()
+    pred_records.index = pd.to_datetime(pred_records.index)
+    pred_records['data_type'] = '预测'
+
+    # 汇总完整OHLCV记录并去重
+    combined_ohlcv = pd.concat([hist_records, pred_records]).sort_index()
+    combined_ohlcv = combined_ohlcv[~combined_ohlcv.index.duplicated(keep='last')]
+    all_dates = combined_ohlcv.index
+    all_x_nums = mdates.date2num(all_dates.to_pydatetime())
+
     # 创建更大的图表
     fig = plt.figure(figsize=(18, 14))
 
@@ -197,19 +215,37 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     gs = plt.GridSpec(3, 1, figure=fig, height_ratios=[3, 1, 1])
 
     ax1 = fig.add_subplot(gs[0])  # 价格图表
-    ax2 = fig.add_subplot(gs[1])  # 成交量图表
+    ax2 = fig.add_subplot(gs[1], sharex=ax1)  # 成交量图表（与价格图共享X轴时间）
     ax3 = fig.add_subplot(gs[2])  # 价格变动图表
 
     # 1. 价格图表 - 更大更清晰
     # 只显示最近200个交易日的历史数据，避免图表过于拥挤
-    recent_history = close_df['历史数据'].iloc[-min(200, len(close_df['历史数据'])):]
-    ax1.plot(recent_history.index, recent_history.values, label='历史价格', color='#1f77b4', linewidth=2.5, alpha=0.9)
-    ax1.plot(close_df['预测数据'].index, close_df['预测数据'].values, label='预测价格',
-             color='#ff7f0e', linewidth=2.5, linestyle='-', marker='o', markersize=3)
+    recent_history = hist_close.iloc[-min(200, len(hist_close)):]
+    line_hist = ax1.plot(recent_history.index, recent_history.values, label='历史价格', color='#1f77b4', linewidth=2.5, alpha=0.9, marker='.', markersize=4)
+
+    # 绘制蒙特卡洛多路径独立采样轨迹（浅橙细虚线）
+    if sample_paths is not None and len(sample_paths) > 1:
+        for p_idx, sp in enumerate(sample_paths):
+            sp_c = sp['close'].iloc[:min_len]
+            lbl = f'各采样路径 ({len(sample_paths)}条)' if p_idx == 0 else ""
+            ax1.plot(pred_close.index, sp_c.values, color='#ff9f43',
+                     linewidth=0.9, linestyle='--', alpha=0.4, label=lbl)
+
+    # 绘制扇形置信区间 (Confidence Ribbon)
+    if 'close_upper' in pred_df.columns and 'close_lower' in pred_df.columns:
+        valid_l = min(len(pred_close), len(pred_df['close_upper']))
+        upper_v = pred_df['close_upper'].iloc[:valid_l].values
+        lower_v = pred_df['close_lower'].iloc[:valid_l].values
+        ax1.fill_between(pred_close.index[:valid_l], lower_v, upper_v,
+                         color='#ff7f0e', alpha=0.25, label='置信区间 (Confidence Ribbon)')
+
+    # 绘制预测均值折线
+    line_pred = ax1.plot(pred_close.index, pred_close.values, label='预测走势 (均值)',
+                         color='#ff7f0e', linewidth=2.5, linestyle='-', marker='o', markersize=4)
 
     # 添加预测起始点的标记
-    prediction_start_date = close_df['预测数据'].index[0] if len(close_df['预测数据']) > 0 else close_df.index[-1]
-    prediction_start_price = close_df['历史数据'].iloc[-1]
+    prediction_start_date = pred_close.index[0] if len(pred_close) > 0 else hist_close.index[-1]
+    prediction_start_price = hist_close.iloc[-1]
     ax1.axvline(x=prediction_start_date, color='red', linestyle='--', alpha=0.7, linewidth=1.5)
     ax1.annotate('预测起点', xy=(prediction_start_date, prediction_start_price),
                  xytext=(10, 10), textcoords='offset points',
@@ -219,39 +255,37 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     ax1.set_ylabel('收盘价 (元)', fontsize=14, fontweight='bold')
     ax1.legend(loc='upper left', fontsize=12)
     ax1.grid(True, alpha=0.3)
-    ax1.set_title(f'{stock_name}({stock_code}) 股票价格预测 - 未来{pred_len}个交易日',
-                  fontsize=16, fontweight='bold', pad=20)
+    ax1.set_title(f'{stock_name}({stock_code}) 股票价格预测 - 未来{pred_len}个交易日\n[💡 滚轮: 缩放时间轴 | 按住左键拖动: 左右平移 | 单击: 查看OHLCV/成交量/置信区间 | 双击: 重置视野 | 右键: 清除提示]',
+                  fontsize=14, fontweight='bold', pad=15)
 
     # 设置x轴日期格式
-    ax1.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
 
     # 设置y轴格式
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.2f}'))
 
-    # 2. 成交量图表 - 优化显示
-    # 只显示预测期的成交量
-    pred_volumes = volume_df['预测数据'].dropna()
+    # 2. 成交量图表 - 显示历史与预测成交量
+    recent_hist_vol = hist_volume.iloc[-min(200, len(hist_volume)):]
+    if len(recent_hist_vol) > 0:
+        ax2.bar(recent_hist_vol.index, recent_hist_vol.values,
+                alpha=0.6, color='#1f77b4', label='历史成交量', width=0.8)
     if len(pred_volumes) > 0:
         ax2.bar(pred_volumes.index, pred_volumes.values,
                 alpha=0.7, color='#ff7f0e', label='预测成交量', width=0.8)
 
-    ax2.set_ylabel('成交量 (手)', fontsize=14, fontweight='bold')
+    ax2.set_ylabel('成交量 (股)', fontsize=14, fontweight='bold')
     ax2.legend(loc='upper left', fontsize=12)
     ax2.grid(True, alpha=0.3)
-
-    # 设置x轴标签
-    if len(pred_volumes) > 0:
-        ax2.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%m-%d'))
-        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x*1e-4:.0f}万' if x >= 1e4 else f'{x:.0f}'))
 
     # 3. 价格变动图表 - 优化显示
-    if len(close_df['预测数据']) > 0:
-        price_change = close_df['预测数据'] - close_df['历史数据'].iloc[-1]
+    if len(pred_close) > 0 and len(hist_close) > 0:
+        price_change = pred_close - hist_close.iloc[-1]
         colors = ['green' if x >= 0 else 'red' for x in price_change]
 
         # 每5个交易日显示一个标签，避免过于拥挤
-        bars = ax3.bar(range(len(price_change)), price_change, alpha=0.8, color=colors)
+        bars = ax3.bar(range(len(price_change)), price_change.values, alpha=0.8, color=colors)
 
         # 在关键点添加数值标签
         for i, bar in enumerate(bars):
@@ -268,43 +302,349 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     ax3.grid(True, alpha=0.3)
 
     # 设置x轴标签
-    if len(price_change) > 0:
+    if len(pred_close) > 0:
         # 每10个交易日显示一个标签
-        xticks_positions = list(range(0, len(price_change), max(1, len(price_change) // 10)))
-        if len(price_change) - 1 not in xticks_positions:
-            xticks_positions.append(len(price_change) - 1)
+        xticks_positions = list(range(0, len(pred_close), max(1, len(pred_close) // 10)))
+        if len(pred_close) - 1 not in xticks_positions:
+            xticks_positions.append(len(pred_close) - 1)
         ax3.set_xticks(xticks_positions)
         ax3.set_xticklabels([f'D{i + 1}' for i in xticks_positions])
 
     # 添加详细的统计信息框
-    if len(close_df['预测数据']) > 0 and not np.isnan(close_df['历史数据'].iloc[-1]):
+    if len(pred_close) > 0 and len(hist_close) > 0:
+        last_hist_val = hist_close.iloc[-1]
+        last_pred_val = pred_close.iloc[-1]
+        change_ratio = (last_pred_val / last_hist_val - 1) * 100
         pred_stats = {
             '股票代码': stock_code,
             '股票名称': stock_name,
-            '当前价格': f"{close_df['历史数据'].iloc[-1]:.2f} 元",
-            '预测结束价格': f"{close_df['预测数据'].iloc[-1]:.2f} 元",
-            '预测涨跌幅': f"{(close_df['预测数据'].iloc[-1] / close_df['历史数据'].iloc[-1] - 1) * 100:+.2f}%",
-            '预测期间最高价': f"{close_df['预测数据'].max():.2f} 元",
-            '预测期间最低价': f"{close_df['预测数据'].min():.2f} 元",
-            '预测波动率': f"{close_df['预测数据'].std():.2f} 元",
-            '预测起始日期': f"{close_df['预测数据'].index[0].strftime('%Y-%m-%d')}",
-            '预测结束日期': f"{close_df['预测数据'].index[-1].strftime('%Y-%m-%d')}",
-            '预测交易日数': f"{len(close_df['预测数据'])} 天"
+            '当前价格': f"{last_hist_val:.2f} 元",
+            '预测结束价格': f"{last_pred_val:.2f} 元",
+            '预测涨跌幅': f"{change_ratio:+.2f}%",
+            '预测期间最高价': f"{pred_close.max():.2f} 元",
+            '预测期间最低价': f"{pred_close.min():.2f} 元",
+            '预测波动率': f"{pred_close.std():.2f} 元",
+            '预测起始日期': f"{pred_close.index[0].strftime('%Y-%m-%d')}",
+            '预测结束日期': f"{pred_close.index[-1].strftime('%Y-%m-%d')}",
+            '预测交易日数': f"{len(pred_close)} 天"
         }
+        if 'close_upper' in pred_df.columns and 'close_lower' in pred_df.columns:
+            last_idx = len(pred_close) - 1
+            pred_stats['期末置信区间'] = f"{pred_df['close_lower'].iloc[last_idx]:.2f} ~ {pred_df['close_upper'].iloc[last_idx]:.2f} 元"
 
         stats_text = "\n".join([f"{k}: {v}" for k, v in pred_stats.items()])
         fig.text(0.02, 0.02, stats_text, fontsize=10,
                  bbox=dict(boxstyle="round,pad=0.5", facecolor="lightblue", alpha=0.8),
                  verticalalignment='bottom')
 
+    # 记录默认初始视野，便于双击一键复位
+    default_xlim = ax1.get_xlim()
+    default_ylim = ax1.get_ylim()
+
+    # ==================== 交互功能：滚轮缩放、鼠标拖动与点击查看 ====================
+    # 1. 价格图浮窗 (OHLCV)
+    annot_ax1 = ax1.annotate(
+        "",
+        xy=(0, 0),
+        xytext=(20, 20),
+        textcoords="offset points",
+        bbox=dict(boxstyle="round4,pad=0.6", fc="#FFFFF2", ec="#2B4C7E", lw=1.5, alpha=0.96),
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color="#2B4C7E", lw=1.5),
+        fontsize=10,
+        zorder=30
+    )
+    annot_ax1.set_visible(False)
+    highlight_ax1 = ax1.scatter([], [], s=140, facecolors='none', edgecolors='#FF0000', linewidths=2.5, zorder=35)
+
+    # 2. 成交量图浮窗 (Volume)
+    annot_ax2 = ax2.annotate(
+        "",
+        xy=(0, 0),
+        xytext=(20, 20),
+        textcoords="offset points",
+        bbox=dict(boxstyle="round4,pad=0.6", fc="#F0F8FF", ec="#E65100", lw=1.5, alpha=0.96),
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color="#E65100", lw=1.5),
+        fontsize=10,
+        zorder=30
+    )
+    annot_ax2.set_visible(False)
+    highlight_ax2 = ax2.scatter([], [], s=120, facecolors='none', edgecolors='#E65100', linewidths=2.5, zorder=35)
+
+    # 3. 联动垂直指示线
+    vline_ax1 = ax1.axvline(x=np.nan, color='#888888', linestyle=':', alpha=0.7, linewidth=1.2, visible=False)
+    vline_ax2 = ax2.axvline(x=np.nan, color='#888888', linestyle=':', alpha=0.7, linewidth=1.2, visible=False)
+
+    # 拖拽状态记录
+    drag_state = {
+        'is_pressed': False,
+        'is_dragging': False,
+        'press_x': None,
+        'press_xlim': None,
+    }
+
+    def auto_adjust_axes():
+        """根据当前可见时间窗口，自动自适应价格轴和成交量轴的Y范围"""
+        cur_xlim = ax1.get_xlim()
+        mask = (all_x_nums >= cur_xlim[0]) & (all_x_nums <= cur_xlim[1])
+        if np.any(mask):
+            sub_df = combined_ohlcv.iloc[mask]
+            # 价格Y轴自适应
+            vis_high = sub_df['high'].max() if 'high' in sub_df.columns else sub_df['close'].max()
+            vis_low = sub_df['low'].min() if 'low' in sub_df.columns else sub_df['close'].min()
+            if pd.notnull(vis_high) and pd.notnull(vis_low) and vis_high > vis_low:
+                p_margin = (vis_high - vis_low) * 0.1
+                ax1.set_ylim([vis_low - p_margin, vis_high + p_margin])
+
+            # 成交量Y轴自适应
+            vis_vol = sub_df['volume'].max() if 'volume' in sub_df.columns else None
+            if pd.notnull(vis_vol) and vis_vol > 0:
+                ax2.set_ylim([0, vis_vol * 1.15])
+
+    def on_scroll(event):
+        """鼠标滚轮缩放事件：以鼠标所在时间为中心等比放大/缩小"""
+        if event.inaxes not in [ax1, ax2]:
+            return
+        if event.xdata is None:
+            return
+
+        cur_xlim = ax1.get_xlim()
+        cur_xrange = cur_xlim[1] - cur_xlim[0]
+
+        # 向上滚放大(缩小跨度)，向下滚缩小(放大跨度)
+        is_zoom_in = False
+        if hasattr(event, 'step') and event.step != 0:
+            is_zoom_in = event.step > 0
+        elif hasattr(event, 'button'):
+            is_zoom_in = (event.button == 'up')
+
+        scale_factor = 0.8 if is_zoom_in else 1.25
+        new_range = cur_xrange * scale_factor
+
+        # 限制最大缩放倍数（最少 3 天，最多不超过全部数据的 2 倍）
+        total_data_range = max(all_x_nums) - min(all_x_nums)
+        if new_range < 3 or new_range > total_data_range * 2.5:
+            return
+
+        # 以鼠标所在的 X 坐标为锚点进行等比缩放
+        xdata = event.xdata
+        ratio = (xdata - cur_xlim[0]) / cur_xrange
+        new_xmin = xdata - new_range * ratio
+        new_xmax = xdata + new_range * (1.0 - ratio)
+
+        ax1.set_xlim([new_xmin, new_xmax])
+        auto_adjust_axes()
+        fig.canvas.draw_idle()
+
+    def on_press(event):
+        """鼠标按下：记录起始点，准备拖拽或点击"""
+        if event.inaxes not in [ax1, ax2]:
+            return
+
+        if event.button == 1:  # 左键按下
+            drag_state['is_pressed'] = True
+            drag_state['is_dragging'] = False
+            drag_state['press_x'] = event.x
+            drag_state['press_xlim'] = ax1.get_xlim()
+
+        elif event.button == 3:  # 右键点击清除所有浮窗提示
+            annot_ax1.set_visible(False)
+            annot_ax2.set_visible(False)
+            highlight_ax1.set_offsets(np.empty((0, 2)))
+            highlight_ax2.set_offsets(np.empty((0, 2)))
+            vline_ax1.set_visible(False)
+            vline_ax2.set_visible(False)
+            fig.canvas.draw_idle()
+
+    def on_motion(event):
+        """鼠标移动：按住左键移动时左右拖拽平移图表"""
+        if not drag_state['is_pressed'] or drag_state['press_x'] is None:
+            return
+        if event.x is None:
+            return
+
+        dx_pixels = event.x - drag_state['press_x']
+        # 移动超过 3 个像素触发拖动模式
+        if abs(dx_pixels) > 3:
+            drag_state['is_dragging'] = True
+
+        if drag_state['is_dragging']:
+            # 将像素差转换为数据坐标差
+            inv = ax1.transData.inverted()
+            x0_data = inv.transform((drag_state['press_x'], 0))[0]
+            x1_data = inv.transform((event.x, 0))[0]
+            dx_data = x1_data - x0_data
+
+            orig_xmin, orig_xmax = drag_state['press_xlim']
+            new_xmin = orig_xmin - dx_data
+            new_xmax = orig_xmax - dx_data
+
+            ax1.set_xlim([new_xmin, new_xmax])
+            auto_adjust_axes()
+            fig.canvas.draw_idle()
+
+    def handle_click_info(event):
+        """处理单击查看 OHLCV 或 Volume 数据"""
+        if event.xdata is None or event.inaxes not in [ax1, ax2]:
+            return
+
+        dist = np.abs(all_x_nums - event.xdata)
+        idx = int(np.argmin(dist))
+        nearest_x = all_x_nums[idx]
+        row = combined_ohlcv.iloc[idx]
+        dt = all_dates[idx]
+
+        # 更新纵向参考虚线
+        vline_ax1.set_xdata([nearest_x, nearest_x])
+        vline_ax1.set_visible(True)
+        vline_ax2.set_xdata([nearest_x, nearest_x])
+        vline_ax2.set_visible(True)
+
+        # 点击价格图 ax1 -> 展示 OHLCV 详情
+        if event.inaxes == ax1:
+            curr_open = row.get('open', np.nan)
+            curr_high = row.get('high', np.nan)
+            curr_low = row.get('low', np.nan)
+            curr_close = row.get('close', np.nan)
+            curr_vol = row.get('volume', np.nan)
+            curr_amt = row.get('amount', np.nan)
+            dtype = row.get('data_type', '数据')
+
+            prev_close = combined_ohlcv.iloc[idx - 1]['close'] if idx > 0 else curr_close
+            chg = curr_close - prev_close
+            chg_pct = (chg / prev_close) * 100 if prev_close else 0.0
+            color_mark = "🔴" if chg >= 0 else "🟢"
+            chg_str = f"{color_mark} {chg:+.2f} ({chg_pct:+.2f}%)"
+
+            vol_hands = curr_vol / 100 if pd.notnull(curr_vol) else 0
+            if pd.notnull(curr_amt) and curr_amt > 0:
+                amt_str = f"{curr_amt / 1e8:.2f} 亿元" if curr_amt >= 1e8 else f"{curr_amt / 1e4:.2f} 万元"
+            else:
+                amt_str = "无"
+
+            # 蒙特卡洛置信区间展示
+            conf_info = ""
+            if dtype == '预测' and 'close_upper' in row and 'close_lower' in row:
+                c_up = row['close_upper']
+                c_low = row['close_lower']
+                if pd.notnull(c_up) and pd.notnull(c_low):
+                    span = c_up - c_low
+                    span_pct = (span / curr_close) * 100 if curr_close else 0.0
+                    conf_info = (
+                        f"\n──────────────────────\n"
+                        f"🔮 蒙特卡洛置信区间:\n"
+                        f"乐观上限 (90%):  {c_up:.2f} 元\n"
+                        f"悲观下限 (10%):  {c_low:.2f} 元\n"
+                        f"区间跨度:        {span:.2f} 元 (±{span_pct/2:.1f}%)"
+                    )
+
+            ohlcv_text = (
+                f"📅 {dt.strftime('%Y-%m-%d')} 【{dtype}行情】\n"
+                f"──────────────────────\n"
+                f"开盘价 (Open):   {curr_open:.2f} 元\n"
+                f"最高价 (High):   {curr_high:.2f} 元\n"
+                f"最低价 (Low):    {curr_low:.2f} 元\n"
+                f"收盘价 (Close):  {curr_close:.2f} 元\n"
+                f"涨跌幅 (Change): {chg_str}\n"
+                f"成交量 (Volume): {curr_vol:,.0f} 股 ({vol_hands:,.0f} 手)\n"
+                f"成交额 (Amount): {amt_str}"
+                f"{conf_info}"
+            )
+
+            annot_ax1.xy = (nearest_x, curr_close)
+            annot_ax1.set_text(ohlcv_text)
+            annot_ax1.set_visible(True)
+            annot_ax2.set_visible(False)
+            highlight_ax1.set_offsets([[nearest_x, curr_close]])
+            highlight_ax2.set_offsets(np.empty((0, 2)))
+            fig.canvas.draw_idle()
+
+        # 点击成交量图 ax2 -> 展示 Volume 详情
+        elif event.inaxes == ax2:
+            curr_vol = row.get('volume', 0)
+            curr_amt = row.get('amount', 0)
+            curr_close = row.get('close', np.nan)
+            dtype = row.get('data_type', '数据')
+
+            vol_hands = curr_vol / 100 if pd.notnull(curr_vol) else 0
+            if curr_vol >= 1e8:
+                vol_scale = f"{curr_vol / 1e8:.2f} 亿股"
+            elif curr_vol >= 1e4:
+                vol_scale = f"{curr_vol / 1e4:.2f} 万股"
+            else:
+                vol_scale = f"{curr_vol:,.0f} 股"
+
+            if pd.notnull(curr_amt) and curr_amt > 0:
+                amt_str = f"{curr_amt / 1e8:.2f} 亿元" if curr_amt >= 1e8 else f"{curr_amt / 1e4:.2f} 万元"
+            else:
+                amt_str = "无"
+
+            vol_text = (
+                f"📊 {dt.strftime('%Y-%m-%d')} 【{dtype}成交量】\n"
+                f"──────────────────────\n"
+                f"成交量 (股):  {curr_vol:,.0f} 股 ({vol_scale})\n"
+                f"成交量 (手):  {vol_hands:,.0f} 手\n"
+                f"成交额:       {amt_str}\n"
+                f"当日收盘价:   {curr_close:.2f} 元"
+            )
+
+            annot_ax2.xy = (nearest_x, curr_vol)
+            annot_ax2.set_text(vol_text)
+            annot_ax2.set_visible(True)
+            annot_ax1.set_visible(False)
+            highlight_ax2.set_offsets([[nearest_x, curr_vol]])
+            highlight_ax1.set_offsets(np.empty((0, 2)))
+            fig.canvas.draw_idle()
+
+    def on_release(event):
+        """鼠标松开：若未拖拽则执行点击查看或双击复位"""
+        if not drag_state['is_pressed']:
+            return
+
+        was_dragging = drag_state['is_dragging']
+        drag_state['is_pressed'] = False
+        drag_state['is_dragging'] = False
+        drag_state['press_x'] = None
+        drag_state['press_xlim'] = None
+
+        # 如果刚才处于拖拽平移，松开时不触发点击弹窗
+        if was_dragging:
+            return
+
+        # 双击左键：一键重置恢复初始视野
+        if event.dblclick:
+            ax1.set_xlim(default_xlim)
+            ax1.set_ylim(default_ylim)
+            annot_ax1.set_visible(False)
+            annot_ax2.set_visible(False)
+            highlight_ax1.set_offsets(np.empty((0, 2)))
+            highlight_ax2.set_offsets(np.empty((0, 2)))
+            vline_ax1.set_visible(False)
+            vline_ax2.set_visible(False)
+            auto_adjust_axes()
+            fig.canvas.draw_idle()
+            return
+
+        # 普通单击：展示浮窗
+        handle_click_info(event)
+
+    # 注册事件监听：滚轮缩放、拖拽平移、单击展示、双击复位
+    fig.canvas.mpl_connect('scroll_event', on_scroll)
+    fig.canvas.mpl_connect('button_press_event', on_press)
+    fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('button_release_event', on_release)
+
     plt.tight_layout()
 
-    # 保存高分辨率图片到指定目录
+    # 保存高分辨率图片到指定目录（保存时浮窗处于隐藏状态，保证图片整洁）
     chart_filename = os.path.join(output_dir, f'{stock_code}_prediction_chart.png')
     plt.savefig(chart_filename, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"📊 预测图表已保存: {chart_filename}")
 
-    plt.show()
+    try:
+        plt.show()
+    except Exception:
+        pass
+    plt.close(fig)
 
     return close_df, volume_df
 
@@ -321,52 +661,70 @@ def generate_prediction_report(close_df, volume_df, pred_df, future_dates, stock
     print(f"📊 {stock_name}({stock_code}) 股票预测报告")
     print(f"{'=' * 70}")
 
-    if len(close_df['预测数据']) == 0 or np.isnan(close_df['历史数据'].iloc[-1]):
+    hist_close = close_df['历史数据'].dropna()
+    pred_close = close_df['预测数据'].dropna()
+    vol_pred = volume_df['预测数据'].dropna()
+
+    if len(pred_close) == 0 or len(hist_close) == 0:
         print("❌ 没有有效的预测数据可生成报告")
         return
 
     # 确保所有数组长度一致
-    min_len = min(len(close_df['预测数据']), len(volume_df['预测数据']), len(future_dates))
+    min_len = min(len(pred_close), len(vol_pred), len(future_dates))
+    valid_pred_close = pred_close.iloc[:min_len]
+    valid_vol_pred = vol_pred.iloc[:min_len]
+    valid_future_dates = future_dates[:min_len]
 
     # 基本统计
-    historical_close = close_df['历史数据'].iloc[-1]
-    predicted_close = close_df['预测数据'].iloc[-1]
+    historical_close = hist_close.iloc[-1]
+    predicted_close = valid_pred_close.iloc[-1]
     price_change_pct = (predicted_close / historical_close - 1) * 100
 
     print(f"🔮 预测概览:")
     print(f"   当前价格: {historical_close:.2f} 元")
-    print(f"   预测结束价格: {predicted_close:.2f} 元")
+    if 'close_upper' in pred_df.columns and 'close_lower' in pred_df.columns:
+        last_up = pred_df['close_upper'].iloc[min_len - 1]
+        last_low = pred_df['close_lower'].iloc[min_len - 1]
+        print(f"   预测结束价格: {predicted_close:.2f} 元 (置信区间: {last_low:.2f} ~ {last_up:.2f} 元)")
+    else:
+        print(f"   预测结束价格: {predicted_close:.2f} 元")
     print(f"   预测涨跌幅: {price_change_pct:+.2f}%")
     print(f"   预测期间: {min_len} 个交易日")
     print(
-        f"   预测时间范围: {future_dates[0].strftime('%Y-%m-%d')} 到 {future_dates[min_len - 1].strftime('%Y-%m-%d')}")
+        f"   预测时间范围: {valid_future_dates[0].strftime('%Y-%m-%d')} 到 {valid_future_dates[-1].strftime('%Y-%m-%d')}")
 
     print(f"\n📈 价格预测统计:")
-    print(f"   预测最高价: {close_df['预测数据'].max():.2f} 元")
-    print(f"   预测最低价: {close_df['预测数据'].min():.2f} 元")
-    print(f"   预测平均价: {close_df['预测数据'].mean():.2f} 元")
-    print(f"   价格波动率: {close_df['预测数据'].std():.2f} 元")
+    print(f"   预测最高价: {valid_pred_close.max():.2f} 元")
+    print(f"   预测最低价: {valid_pred_close.min():.2f} 元")
+    print(f"   预测平均价: {valid_pred_close.mean():.2f} 元")
+    print(f"   价格波动率: {valid_pred_close.std():.2f} 元")
 
     print(f"\n📊 成交量预测统计:")
-    print(f"   预测平均成交量: {volume_df['预测数据'].mean():,.0f} 手")
-    print(f"   预测最大成交量: {volume_df['预测数据'].max():,.0f} 手")
-    print(f"   预测最小成交量: {volume_df['预测数据'].min():,.0f} 手")
+    print(f"   预测平均成交量: {valid_vol_pred.mean():,.0f} 手")
+    print(f"   预测最大成交量: {valid_vol_pred.max():,.0f} 手")
+    print(f"   预测最小成交量: {valid_vol_pred.min():,.0f} 手")
 
     # 保存详细预测数据到指定目录 - 确保所有数组长度一致
-    prediction_details = pd.DataFrame({
-        '日期': future_dates[:min_len],
-        '预测收盘价': close_df['预测数据'].values[:min_len],
-        '预测成交量': volume_df['预测数据'].values[:min_len],
-        '价格变动(元)': (close_df['预测数据'].values[:min_len] - historical_close),
-        '价格变动(%)': ((close_df['预测数据'].values[:min_len] / historical_close - 1) * 100)
+    detail_dict = {
+        '日期': valid_future_dates,
+        '预测收盘价_均值': valid_pred_close.values,
+    }
+    if 'close_upper' in pred_df.columns and 'close_lower' in pred_df.columns:
+        detail_dict['预测收盘价_上限(90%)'] = pred_df['close_upper'].iloc[:min_len].values
+        detail_dict['预测收盘价_下限(10%)'] = pred_df['close_lower'].iloc[:min_len].values
+    detail_dict.update({
+        '预测成交量': valid_vol_pred.values,
+        '价格变动(元)': (valid_pred_close.values - historical_close),
+        '价格变动(%)': ((valid_pred_close.values / historical_close - 1) * 100)
     })
 
+    prediction_details = pd.DataFrame(detail_dict)
     prediction_file = os.path.join(output_dir, f'{stock_code}_detailed_predictions.csv')
     prediction_details.to_csv(prediction_file, index=False, encoding='utf-8-sig')
     print(f"\n💾 详细预测数据已保存: {prediction_file}")
 
 
-def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred_days=100, output_dir="./output"):
+def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred_days=100, output_dir="./output", sample_count=5):
     """
     主函数：执行股票价格预测
 
@@ -376,6 +734,7 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
     data_dir: 数据文件目录
     pred_days: 预测天数（自然日）
     output_dir: 输出文件目录
+    sample_count: 蒙特卡洛采样路径数（>=2 时自动启用扇形置信区间）
     """
     # 构建数据文件路径
     csv_file_path = os.path.join(data_dir, f"{stock_code}_stock_data.csv")
@@ -384,6 +743,7 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
     print("=" * 70)
     print(f"数据文件: {csv_file_path}")
     print(f"预测天数: {pred_days} 天（自然日）")
+    print(f"采样路径: {sample_count} 条蒙特卡洛集成")
     print(f"输出目录: {output_dir}")
 
     # 检查数据文件是否存在
@@ -404,7 +764,7 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
 
         # 2. 实例化预测器
         print("步骤2: 初始化预测器...")
-        predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
+        predictor = KronosPredictor(model, tokenizer, device=None, max_context=512)
         print("✅ 预测器初始化完成")
 
         # 3. 准备数据
@@ -424,8 +784,8 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         # 5. 准备输入数据
         print("步骤5: 准备输入数据...")
         # 使用最新的数据作为输入
-        x_df = df.loc[-lookback:, ['open', 'high', 'low', 'close', 'volume', 'amount']].reset_index(drop=True)
-        x_timestamp = df.loc[-lookback:, 'timestamps'].reset_index(drop=True)
+        x_df = df.iloc[-lookback:][['open', 'high', 'low', 'close', 'volume', 'amount']].reset_index(drop=True)
+        x_timestamp = df.iloc[-lookback:]['timestamps'].reset_index(drop=True)
 
         # 生成未来日期（考虑节假日）
         last_historical_date = df['timestamps'].iloc[-1]
@@ -435,20 +795,57 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         print(f"历史数据时间范围: {x_timestamp.iloc[0]} 到 {x_timestamp.iloc[-1]}")
         print(f"预测时间范围: {future_dates[0]} 到 {future_dates[-1]}")
 
-        # 6. 执行预测
-        print("步骤6: 执行价格预测...")
-        pred_df = predictor.predict(
-            df=x_df,
-            x_timestamp=x_timestamp,
-            y_timestamp=pd.Series(future_dates),  # 使用未来日期作为预测时间戳
-            pred_len=pred_len,
-            T=1.0,
-            top_p=0.9,
-            sample_count=1,
-            verbose=True
-        )
+        # 6. 执行预测（支持蒙特卡洛多路径集成与扇形置信区间）
+        if sample_count > 1:
+            print(f"步骤6: 执行蒙特卡洛多路径集成预测 (采样路径数: {sample_count})...")
+            sample_paths = predictor.predict_batch(
+                df_list=[x_df] * sample_count,
+                x_timestamp_list=[x_timestamp] * sample_count,
+                y_timestamp_list=[pd.Series(future_dates)] * sample_count,
+                pred_len=pred_len,
+                T=1.0,
+                top_p=0.9,
+                sample_count=1,
+                verbose=True
+            )
 
-        print("✅ 预测完成")
+            # 聚合各采样轨迹矩阵
+            close_matrix = np.stack([p['close'].values for p in sample_paths], axis=0)
+            vol_matrix = np.stack([p['volume'].values for p in sample_paths], axis=0)
+            open_matrix = np.stack([p['open'].values for p in sample_paths], axis=0)
+            high_matrix = np.stack([p['high'].values for p in sample_paths], axis=0)
+            low_matrix = np.stack([p['low'].values for p in sample_paths], axis=0)
+            amt_matrix = np.stack([p['amount'].values for p in sample_paths], axis=0)
+
+            c_upper = np.percentile(close_matrix, 90, axis=0) if sample_count >= 5 else np.max(close_matrix, axis=0)
+            c_lower = np.percentile(close_matrix, 10, axis=0) if sample_count >= 5 else np.min(close_matrix, axis=0)
+
+            pred_df = pd.DataFrame({
+                'open': np.mean(open_matrix, axis=0),
+                'high': np.mean(high_matrix, axis=0),
+                'low': np.mean(low_matrix, axis=0),
+                'close': np.mean(close_matrix, axis=0),
+                'volume': np.mean(vol_matrix, axis=0),
+                'amount': np.mean(amt_matrix, axis=0),
+                'close_upper': c_upper,
+                'close_lower': c_lower,
+                'close_std': np.std(close_matrix, axis=0)
+            }, index=pd.Series(future_dates))
+            print(f"✅ 完成 {sample_count} 条蒙特卡洛轨迹集成与扇形置信区间推导")
+        else:
+            print("步骤6: 执行单路径价格预测...")
+            pred_df = predictor.predict(
+                df=x_df,
+                x_timestamp=x_timestamp,
+                y_timestamp=pd.Series(future_dates),
+                pred_len=pred_len,
+                T=1.0,
+                top_p=0.9,
+                sample_count=1,
+                verbose=True
+            )
+            sample_paths = None
+            print("✅ 预测完成")
 
         # 7. 显示预测结果
         print("\n步骤7: 显示预测结果...")
@@ -457,14 +854,14 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         min_len = min(len(pred_df), len(future_dates))
         pred_df = pred_df.iloc[:min_len]
         pred_df.index = future_dates[:min_len]
-        print(pred_df.head())
+        print(pred_df[['open', 'high', 'low', 'close', 'volume']].head())
 
-        # 8. 可视化结果
+        # 8. 可视化结果（绘制扇形置信区间与独立采样轨迹）
         print("步骤8: 生成可视化图表...")
         # 使用最后一部分历史数据和预测数据
-        kline_df = df.loc[-lookback:].reset_index(drop=True)
+        kline_df = df.iloc[-lookback:].reset_index(drop=True)
         close_df, volume_df = plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code, stock_name,
-                                                           pred_len, output_dir)
+                                                           pred_len, output_dir, sample_paths=sample_paths)
 
         # 9. 生成预测报告
         print("步骤9: 生成预测报告...")
@@ -476,14 +873,18 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         print(f"  📋 {os.path.join(output_dir, stock_code + '_detailed_predictions.csv')} - 详细预测数据")
 
         # 显示预测总结
-        if len(close_df['预测数据']) > 0 and not np.isnan(close_df['历史数据'].iloc[-1]):
+        hist_close_valid = close_df['历史数据'].dropna()
+        pred_close_valid = close_df['预测数据'].dropna()
+        if len(pred_close_valid) > 0 and len(hist_close_valid) > 0:
             print(f"\n📈 预测总结:")
-            historical_price = close_df['历史数据'].iloc[-1]
-            predicted_price = close_df['预测数据'].iloc[-1]
+            historical_price = hist_close_valid.iloc[-1]
+            predicted_price = pred_close_valid.iloc[-1]
             change_pct = (predicted_price / historical_price - 1) * 100
 
             print(f"  当前价格: {historical_price:.2f} 元")
-            print(f"  预测价格: {predicted_price:.2f} 元")
+            print(f"  预测价格(均值): {predicted_price:.2f} 元")
+            if 'close_upper' in pred_df.columns and 'close_lower' in pred_df.columns:
+                print(f"  置信区间: {pred_df['close_lower'].iloc[min_len-1]:.2f} ~ {pred_df['close_upper'].iloc[min_len-1]:.2f} 元")
             print(f"  预期涨跌: {change_pct:+.2f}%")
             print(
                 f"  预测时间: {future_dates[0].strftime('%Y-%m-%d')} 到 {future_dates[min_len - 1].strftime('%Y-%m-%d')}")
@@ -517,18 +918,20 @@ if __name__ == "__main__":
     """
 
     # ==================== 在这里修改股票配置 ====================
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
     STOCK_CONFIG = {
         "stock_code": "300418",  # 股票代码
         "stock_name": "昆仑万维",  # 股票名称
-        "data_dir": "./data",  # 数据文件目录
+        "data_dir": os.path.join(CURRENT_DIR, "data"),  # 数据文件目录
         "pred_days": 100,  # 预测100个自然日
-        "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\yuce"  # 输出文件目录
+        "sample_count": 5,  # 蒙特卡洛采样路径数 (>=2 自动开启扇形置信区间)
+        "output_dir": os.path.join(CURRENT_DIR, "yuce")  # 输出文件目录
     }
 
     # 其他股票配置示例：
-    # STOCK_CONFIG = {"stock_code": "000001", "stock_name": "平安银行", "data_dir": "./data", "pred_days": 100, "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\yuce"}
-    # STOCK_CONFIG = {"stock_code": "600036", "stock_name": "招商银行", "data_dir": "./data", "pred_days": 100, "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\yuce"}
-    # STOCK_CONFIG = {"stock_code": "300750", "stock_name": "宁德时代", "data_dir": "./data", "pred_days": 100, "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\yuce"}
+    # STOCK_CONFIG = {"stock_code": "000001", "stock_name": "平安银行", "data_dir": os.path.join(CURRENT_DIR, "data"), "pred_days": 100, "sample_count": 5, "output_dir": os.path.join(CURRENT_DIR, "yuce")}
+    # STOCK_CONFIG = {"stock_code": "600036", "stock_name": "招商银行", "data_dir": os.path.join(CURRENT_DIR, "data"), "pred_days": 100, "sample_count": 5, "output_dir": os.path.join(CURRENT_DIR, "yuce")}
+    # STOCK_CONFIG = {"stock_code": "300750", "stock_name": "宁德时代", "data_dir": os.path.join(CURRENT_DIR, "data"), "pred_days": 100, "sample_count": 5, "output_dir": os.path.join(CURRENT_DIR, "yuce")}
     # =========================================================
 
     print("🤖 智能股票预测工具")
@@ -536,6 +939,7 @@ if __name__ == "__main__":
     print(f"当前预测股票: {STOCK_CONFIG['stock_name']}({STOCK_CONFIG['stock_code']})")
     print(f"数据目录: {STOCK_CONFIG['data_dir']}")
     print(f"预测天数: {STOCK_CONFIG['pred_days']} 天（自然日）")
+    print(f"蒙特卡洛采样: {STOCK_CONFIG['sample_count']} 条路径 (扇形置信区间)")
     print(f"输出目录: {STOCK_CONFIG['output_dir']}")
     print()
 

@@ -21,8 +21,12 @@ try:
 except ImportError:
     print("⚠️ 无法导入Kronos模型，预测功能将不可用")
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+# 设置中文字体 (兼容 macOS / Windows / Linux)
+plt.rcParams['font.sans-serif'] = [
+    'PingFang SC', 'Heiti SC', 'STHeiti', 'Arial Unicode MS',  # macOS
+    'SimHei', 'Microsoft YaHei',                              # Windows
+    'WenQuanYi Micro Hei', 'DejaVu Sans', 'sans-serif'        # Linux / Fallback
+]
 plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
 
 
@@ -35,21 +39,267 @@ def ensure_output_directory(output_dir):
     return output_dir
 
 
-def fetch_real_stock_data(stock_code, period="daily", adjust="qfq"):
+def get_stock_market_prefix(stock_code):
+    """根据股票代码判断市场类型 (Baostock格式: sh / sz / bj)"""
+    if stock_code.startswith(('0', '2', '3')):
+        return "sz"
+    elif stock_code.startswith(('6', '9')):
+        return "sh"
+    elif stock_code.startswith(('4', '8', '920')):
+        return "bj"
+    return "sh"
+
+
+def fetch_quote_tencent(symbol):
     """
-    使用AKShare获取真实股票数据
+    腾讯财经快速行情接口 (极简HTTP直连，毫秒响应，不受本地代理影响)
+    """
+    import urllib.request
+    try:
+        url = f"http://qt.gtimg.cn/q={symbol}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as res:
+            text = res.read().decode('gbk', errors='ignore')
+            if '~' in text:
+                parts = text.split('="')[1].split('~')
+                return {
+                    'name': parts[1],
+                    'code': parts[2],
+                    'close': float(parts[3]),
+                    'change': float(parts[4]),
+                    'pct_chg': float(parts[5]),
+                    'volume': float(parts[6]),
+                    'amount': float(parts[7])
+                }
+    except Exception:
+        pass
+    return None
+
+
+_BAOSTOCK_LOGGED_IN = False
+
+
+def ensure_baostock_login():
+    """保证 Baostock 全局只 login 一次，退出时自动 logout，彻底避免重复连接挂起"""
+    global _BAOSTOCK_LOGGED_IN
+    if _BAOSTOCK_LOGGED_IN:
+        return True
+    try:
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code == '0':
+            _BAOSTOCK_LOGGED_IN = True
+            import atexit
+            atexit.register(bs.logout)
+            return True
+        else:
+            print(f"  ⚠️ Baostock登录失败: {lg.error_msg}")
+            return False
+    except Exception as e:
+        print(f"  ⚠️ Baostock登录异常: {e}")
+        return False
+
+
+def fetch_stock_data_baostock(stock_code, history_years=2):
+    """
+    使用Baostock获取前复权股票日线数据 (原生Socket直连，彻底避免HTTP代理ProxyError)
     """
     try:
-        print(f"📡 正在通过AKShare获取 {stock_code} 的真实股票数据...")
+        if not ensure_baostock_login():
+            return None
+        import baostock as bs
+        print(f"📡 [Baostock] 正在获取股票 {stock_code} 的真实日K线数据...")
 
-        # 获取股票数据
+        prefix = get_stock_market_prefix(stock_code)
+        full_code = f"{prefix}.{stock_code}"
+        start_date = (datetime.now() - timedelta(days=history_years * 365 + 60)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+
+        rs = bs.query_history_k_data_plus(
+            full_code,
+            "date,open,high,low,close,volume,amount,pctChg",
+            start_date=start_date,
+            end_date=end_date,
+            frequency="d",
+            adjustflag="2"  # 2: 前复权
+        )
+        data_list = []
+        while (rs.error_code == '0') & rs.next():
+            data_list.append(rs.get_row_data())
+
+        if data_list:
+            df = pd.DataFrame(data_list, columns=rs.fields)
+            df = df.rename(columns={
+                'date': 'timestamps',
+                'pctChg': 'pct_chg'
+            })
+            df['timestamps'] = pd.to_datetime(df['timestamps'])
+            for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'pct_chg']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['stock_code'] = stock_code
+            df = df.dropna(subset=['close']).sort_values('timestamps').reset_index(drop=True)
+            if len(df) > 0:
+                print(f"✅ [Baostock] 成功获取 {stock_code} 共 {len(df)} 条真实数据")
+                print(f"📈 最新收盘价: {df['close'].iloc[-1]:.2f}元, 时间范围: {df['timestamps'].min().strftime('%Y-%m-%d')} 到 {df['timestamps'].max().strftime('%Y-%m-%d')}")
+                return df
+    except Exception as e:
+        print(f"  ⚠️ [Baostock] 获取 {stock_code} 失败: {e}")
+    return None
+
+
+def fetch_index_data_multi_source(index_code, history_years=2):
+    """
+    多数据源获取指数数据 (优先 Baostock，备选 AKShare，极简备选腾讯行情)
+    """
+    index_name = "上证指数" if index_code == "000001" else "深证成指"
+
+    # 1. 首选 Baostock (无代理干扰，最稳定)
+    try:
+        if ensure_baostock_login():
+            import baostock as bs
+            prefix = "sh" if index_code.startswith("0") else "sz"
+            full_code = f"{prefix}.{index_code}"
+            start_date = (datetime.now() - timedelta(days=history_years * 365 + 60)).strftime('%Y-%m-%d')
+            end_date = datetime.now().strftime('%Y-%m-%d')
+
+            rs = bs.query_history_k_data_plus(
+                full_code,
+                "date,open,high,low,close,volume",
+                start_date=start_date,
+                end_date=end_date,
+                frequency="d"
+            )
+            data_list = []
+            while (rs.error_code == '0') & rs.next():
+                data_list.append(rs.get_row_data())
+
+            if data_list:
+                df = pd.DataFrame(data_list, columns=rs.fields)
+                df['date'] = pd.to_datetime(df['date'])
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                df = df.dropna().sort_values('date').reset_index(drop=True)
+                if len(df) >= 20:
+                    print(f"  ✅ [Baostock] 成功获取 {index_name}({index_code}) {len(df)} 条数据 (最新点位: {df['close'].iloc[-1]:.2f})")
+                    return df
+    except Exception as e:
+        print(f"  ⚠️ [Baostock] 获取 {index_name} 失败: {e}")
+
+    # 2. 备选 AKShare (忽略系统代理)
+    try:
+        if hasattr(ak, 'index_zh_a_hist'):
+            df = ak.index_zh_a_hist(symbol=index_code, period="daily")
+        elif hasattr(ak, 'stock_zh_index_daily'):
+            prefix = "sh" if index_code == "000001" else "sz"
+            df = ak.stock_zh_index_daily(symbol=f"{prefix}{index_code}")
+        else:
+            df = None
+        if df is not None and not df.empty:
+            df = df.rename(columns={
+                '日期': 'date', '收盘': 'close', '开盘': 'open',
+                '最高': 'high', '最低': 'low', '成交量': 'volume'
+            })
+            df['date'] = pd.to_datetime(df['date'])
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df = df.dropna().sort_values('date').reset_index(drop=True)
+            if len(df) >= 20:
+                print(f"  ✅ [AKShare] 成功获取 {index_name}({index_code}) {len(df)} 条数据")
+                return df
+    except Exception as e:
+        print(f"  ⚠️ [AKShare] 获取 {index_name} 失败: {e}")
+
+    # 3. 极速备选 腾讯接口 (至少生成基础日线或当前行情)
+    try:
+        prefix = "sh" if index_code.startswith("0") else "sz"
+        symbol = f"s_{prefix}{index_code}"
+        quote = fetch_quote_tencent(symbol)
+        if quote:
+            print(f"  ✅ [腾讯行情] 获取 {index_name} 实时点位: {quote['close']:.2f}, 涨跌幅: {quote['pct_chg']:.2f}%")
+            dummy_dates = pd.bdate_range(end=datetime.now(), periods=25, freq='B')
+            mock_closes = np.linspace(quote['close'] * (1 - quote['pct_chg'] / 100 * 0.05), quote['close'], len(dummy_dates))
+            df = pd.DataFrame({
+                'date': dummy_dates,
+                'open': mock_closes,
+                'high': mock_closes * 1.005,
+                'low': mock_closes * 0.995,
+                'close': mock_closes,
+                'volume': [quote['volume']] * len(dummy_dates)
+            })
+            return df
+    except Exception as e:
+        print(f"  ⚠️ [腾讯行情] 获取 {index_name} 失败: {e}")
+
+    return None
+
+
+def fetch_stock_industry_multi_source(stock_code):
+    """
+    多数据源获取股票所属行业和名称
+    """
+    industry = "未知"
+    stock_name = "未知"
+
+    # 1. Baostock 查询行业与简称
+    try:
+        if ensure_baostock_login():
+            import baostock as bs
+            prefix = get_stock_market_prefix(stock_code)
+            full_code = f"{prefix}.{stock_code}"
+            rs = bs.query_stock_industry(code=full_code)
+            data_list = []
+            while (rs.error_code == '0') & rs.next():
+                data_list.append(rs.get_row_data())
+            if data_list:
+                df = pd.DataFrame(data_list, columns=rs.fields)
+                if 'industry' in df.columns and len(df['industry'].iloc[0]) > 0:
+                    raw_ind = df['industry'].iloc[0]
+                    industry = ''.join([c for c in raw_ind if not c.isalnum()]) or raw_ind
+                if 'code_name' in df.columns:
+                    stock_name = df['code_name'].iloc[0]
+                if industry != "未知":
+                    return industry, stock_name
+    except Exception:
+        pass
+
+    # 2. 腾讯行情快速补充
+    try:
+        prefix = get_stock_market_prefix(stock_code)
+        quote = fetch_quote_tencent(f"{prefix}{stock_code}")
+        if quote and quote.get('name'):
+            stock_name = quote['name']
+    except Exception:
+        pass
+
+    # 3. AKShare 备选
+    try:
+        stock_info = ak.stock_individual_info_em(symbol=stock_code)
+        if not stock_info.empty and 'value' in stock_info.columns:
+            industry_row = stock_info[stock_info['item'] == '行业']
+            if not industry_row.empty:
+                industry = industry_row['value'].iloc[0]
+            name_row = stock_info[stock_info['item'] == '股票简称']
+            if not name_row.empty:
+                stock_name = name_row['value'].iloc[0]
+    except Exception:
+        pass
+
+    return industry, stock_name
+
+
+def fetch_real_stock_data(stock_code, period="daily", adjust="qfq"):
+    """
+    使用AKShare获取真实股票数据 (备选数据源)
+    """
+    try:
+        print(f"📡 [AKShare] 正在获取 {stock_code} 的股票数据...")
         df = ak.stock_zh_a_hist(symbol=stock_code, period=period, adjust=adjust)
 
         if df is None or df.empty:
-            print(f"❌ 未获取到 {stock_code} 的数据")
             return None
 
-        # 重命名列以统一格式
         column_mapping = {
             '日期': 'timestamps',
             '开盘': 'open',
@@ -64,42 +314,40 @@ def fetch_real_stock_data(stock_code, period="daily", adjust="qfq"):
             '换手率': 'turnover'
         }
 
-        # 只映射存在的列
         actual_mapping = {k: v for k, v in column_mapping.items() if k in df.columns}
         df = df.rename(columns=actual_mapping)
-
-        # 确保时间戳格式正确
         df['timestamps'] = pd.to_datetime(df['timestamps'])
         df = df.sort_values('timestamps').reset_index(drop=True)
-
-        # 添加股票代码列
         df['stock_code'] = stock_code
 
-        print(f"✅ 成功获取 {len(df)} 条真实数据")
-        print(f"📈 最新收盘价: {df['close'].iloc[-1]:.2f}元, 涨跌幅: {df['pct_chg'].iloc[-1]:.2f}%")
-        print(f"📅 时间范围: {df['timestamps'].min()} 到 {df['timestamps'].max()}")
-
+        print(f"✅ [AKShare] 成功获取 {len(df)} 条真实数据 (最新收盘: {df['close'].iloc[-1]:.2f}元)")
         return df
 
     except Exception as e:
-        print(f"❌ AKShare数据获取失败: {e}")
+        print(f"  ⚠️ [AKShare] 数据获取失败: {e}")
         return None
 
 
 def get_stock_data_with_retry_all_history(stock_code="600580", retry_count=2):
     """
-    优化的数据获取函数 - 优先使用真实API数据
+    优化的多数据源股票数据获取函数:
+    优先级: 1. Baostock (稳定无代理干扰) -> 2. AKShare -> 3. 模拟数据
     """
-    print(f"🔄 尝试获取股票 {stock_code} 的真实历史数据...")
+    print(f"🔄 尝试多数据源获取股票 {stock_code} 的真实历史数据...")
 
-    # 优先使用AKShare获取真实数据
-    df = fetch_real_stock_data(stock_code, "daily", "qfq")
-
-    if df is not None:
+    # 1. 优先使用 Baostock
+    df = fetch_stock_data_baostock(stock_code, history_years=2)
+    if df is not None and not df.empty:
         return df
-    else:
-        print("⚠️ 真实数据获取失败，使用基于真实价格的模拟数据...")
-        return create_realistic_fallback_data(stock_code)
+
+    # 2. 备选使用 AKShare
+    df = fetch_real_stock_data(stock_code, "daily", "qfq")
+    if df is not None and not df.empty:
+        return df
+
+    # 3. 降级使用模拟数据
+    print("⚠️ 真实数据源均获取失败，使用基于真实价格的模拟数据...")
+    return create_realistic_fallback_data(stock_code)
 
 
 def create_realistic_fallback_data(stock_code="600580"):
@@ -202,23 +450,39 @@ def save_all_history_stock_data(df, stock_code, save_dir):
     return False
 
 
-def get_stock_data(stock_code, data_dir):
+def get_stock_data(stock_code, data_dir, force_refresh=False):
     """
-    获取股票数据，如果数据文件不存在则从API获取真实数据
+    获取股票数据，如果数据不存在或为模拟数据则从多数据源获取真实数据
     """
     csv_file_path = os.path.join(data_dir, f"{stock_code}_stock_data.csv")
 
-    if os.path.exists(csv_file_path):
+    need_download = not os.path.exists(csv_file_path) or force_refresh
+
+    # 检查现有数据是否为模拟生成数据 (如果是模拟数据则自动尝试刷新为真实数据)
+    if not need_download and os.path.exists(csv_file_path):
+        try:
+            check_df = pd.read_csv(csv_file_path)
+            close_col = 'close' if 'close' in check_df.columns else ('收盘价' if '收盘价' in check_df.columns else None)
+            if close_col and len(check_df) <= 265 and (check_df[close_col].iloc[-1] == 20.0 or check_df[close_col].iloc[0] == 20.0):
+                print(f"⚠️ 检测到现有文件为模拟备用数据，自动尝试通过多数据源获取真实历史数据...")
+                need_download = True
+        except Exception:
+            pass
+
+    if not need_download:
         print(f"📁 使用现有数据文件: {csv_file_path}")
         return True, csv_file_path
     else:
-        print(f"📡 数据文件不存在，从API获取真实数据...")
+        print(f"📡 正在从多数据源获取股票 {stock_code} 真实历史数据...")
         df = get_stock_data_with_retry_all_history(stock_code)
 
         if df is not None and not df.empty:
             save_all_history_stock_data(df, stock_code, data_dir)
             return True, csv_file_path
         else:
+            if os.path.exists(csv_file_path):
+                print(f"⚠️ 多数据源刷新失败，继续使用本地数据文件: {csv_file_path}")
+                return True, csv_file_path
             print(f"❌ 无法获取股票数据")
             return False, None
 
@@ -402,22 +666,12 @@ class EnhancedMarketFactorAnalyzer:
 
             for index_code in index_codes:
                 index_name = "上证指数" if index_code == "000001" else "深证成指"
-                print(f"  分析{index_name}({index_code})...")
-
-                # 获取指数数据
-                index_df = ak.stock_zh_index_hist(symbol=index_code, period="daily")
+                # 多数据源获取指数数据 (Baostock -> AKShare -> 腾讯行情)
+                index_df = fetch_index_data_multi_source(index_code)
 
                 if index_df is None or index_df.empty:
                     print(f"  ❌ 无法获取{index_name}数据")
                     continue
-
-                # 重命名列
-                index_df = index_df.rename(columns={
-                    '日期': 'date', '收盘': 'close', '开盘': 'open',
-                    '最高': 'high', '最低': 'low', '成交量': 'volume'
-                })
-                index_df['date'] = pd.to_datetime(index_df['date'])
-                index_df = index_df.sort_values('date').reset_index(drop=True)
 
                 # 计算技术指标
                 index_df['ma5'] = index_df['close'].rolling(5).mean()
@@ -480,18 +734,9 @@ class EnhancedMarketFactorAnalyzer:
         try:
             print(f"🔄 分析板块共振效应...")
 
-            # 获取股票所属行业和概念
-            industry = "未知"
+            # 多数据源获取股票所属行业和简称 (Baostock -> 腾讯行情 -> AKShare)
+            industry, real_name = fetch_stock_industry_multi_source(stock_code)
             concepts = []
-
-            try:
-                stock_info = ak.stock_individual_info_em(symbol=stock_code)
-                if not stock_info.empty and 'value' in stock_info.columns:
-                    industry_row = stock_info[stock_info['item'] == '行业']
-                    if not industry_row.empty:
-                        industry = industry_row['value'].iloc[0]
-            except:
-                pass
 
             # 热门板块和概念映射
             hot_sectors = {
@@ -827,6 +1072,9 @@ def create_comprehensive_market_report(enhancement_info, output_dir, stock_code)
     """
     创建综合市场分析报告
     """
+    analysis_summary = generate_analysis_summary(enhancement_info)
+    enhancement_info['analysis_summary'] = analysis_summary
+
     report = {
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'stock_code': stock_code,
@@ -835,13 +1083,26 @@ def create_comprehensive_market_report(enhancement_info, output_dir, stock_code)
         'macro_analysis': enhancement_info['macro_analysis'],
         'fundamental_analysis': enhancement_info['fundamental_analysis'],
         'adjustment_factor': enhancement_info['adjustment_factor'],
-        'analysis_summary': generate_analysis_summary(enhancement_info)
+        'analysis_summary': analysis_summary
     }
 
-    # 保存报告
+    # 保存报告 (支持 numpy 类型转换)
+    def json_converter(o):
+        if isinstance(o, (np.bool_, bool)):
+            return bool(o)
+        if isinstance(o, (np.integer, int)):
+            return int(o)
+        if isinstance(o, (np.floating, float)):
+            return float(o)
+        if isinstance(o, (np.ndarray, list)):
+            return list(o)
+        if isinstance(o, (pd.Timestamp, datetime)):
+            return str(o)
+        return str(o)
+
     report_file = os.path.join(output_dir, f'{stock_code}_comprehensive_analysis_report.json')
     with open(report_file, 'w', encoding='utf-8') as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+        json.dump(report, f, ensure_ascii=False, indent=2, default=json_converter)
 
     print(f"📋 综合分析报告已保存: {report_file}")
     return report
@@ -902,7 +1163,7 @@ def plot_comprehensive_prediction(
         enhancement_info=None
 ):
     """
-    绘制综合预测图表 - 包含更多市场分析信息
+    绘制综合预测图表 - 支持鼠标点击查看OHLCV、滚轮时间缩放与左键拖拽平移
     """
     ensure_output_directory(output_dir)
 
@@ -918,6 +1179,36 @@ def plot_comprehensive_prediction(
         'neutral': '#95a5a6'
     }
 
+    # 准备价格数据
+    historical_prices = historical_df.set_index('timestamps')['close']
+    prediction_prices = prediction_df.set_index(pd.DatetimeIndex(future_dates[:len(prediction_df)]))['close']
+    current_price = historical_prices.iloc[-1]
+
+    # 准备完整的OHLCV数据集（历史 + 基础预测 + 增强预测），用于鼠标交互点击时精确提取数据
+    hist_records = historical_df.copy()
+    hist_records['timestamps'] = pd.to_datetime(hist_records['timestamps'])
+    hist_records = hist_records.set_index('timestamps')
+    hist_records['data_type'] = '历史'
+
+    pred_records = prediction_df.copy()
+    pred_records.index = pd.to_datetime(future_dates[:len(pred_records)])
+    pred_records['data_type'] = '预测'
+
+    # 若有增强预测数据，提取完整的增强预测 OHLCV（开高低收成交量）
+    enhanced_prices = None
+    if enhancement_info and 'enhanced_prediction' in enhancement_info:
+        enhanced_df = enhancement_info['enhanced_prediction'].copy()
+        enhanced_df.index = pd.to_datetime(future_dates[:len(enhanced_df)])
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            if col in enhanced_df.columns:
+                pred_records[f'enhanced_{col}'] = enhanced_df[col]
+        enhanced_prices = enhanced_df['close']
+
+    combined_ohlcv = pd.concat([hist_records, pred_records]).sort_index()
+    combined_ohlcv = combined_ohlcv[~combined_ohlcv.index.duplicated(keep='last')]
+    all_dates = combined_ohlcv.index
+    all_x_nums = plt.matplotlib.dates.date2num(all_dates.to_pydatetime())
+
     # 创建综合图表
     fig = plt.figure(figsize=(18, 14))
     gs = plt.GridSpec(4, 3, figure=fig, height_ratios=[2, 1, 1, 1])
@@ -926,8 +1217,8 @@ def plot_comprehensive_prediction(
     ax1 = fig.add_subplot(gs[0, :])
     ax1.set_facecolor(colors['background'])
 
-    # 2. 成交量图表
-    ax2 = fig.add_subplot(gs[1, :])
+    # 2. 成交量图表 (与价格图共享时间轴X，实现缩放拖动联动)
+    ax2 = fig.add_subplot(gs[1, :], sharex=ax1)
     ax2.set_facecolor(colors['background'])
 
     # 3. 市场分析图表
@@ -944,111 +1235,72 @@ def plot_comprehensive_prediction(
     ax6 = fig.add_subplot(gs[3, :])
     ax6.set_facecolor(colors['background'])
 
-    # 设置背景色
     fig.patch.set_facecolor('white')
 
-    # 1. 价格图表
-    historical_prices = historical_df.set_index('timestamps')['close']
-    prediction_prices = prediction_df.set_index(pd.DatetimeIndex(future_dates))['close']
-
-    # 获取当前最新价格
-    current_price = historical_prices.iloc[-1]
-
-    # 智能Y轴范围计算
-    all_prices = pd.concat([historical_prices, prediction_prices])
-    data_min = all_prices.min()
-    data_max = all_prices.max()
-
-    price_range = data_max - data_min
-    y_margin = price_range * 0.15
-
-    y_min = max(0, data_min - y_margin)
-    y_max = data_max + y_margin
-
-    # 设置Y轴刻度
-    y_interval = calculate_optimal_interval(y_min, y_max)
-    y_ticks = np.arange(round(y_min / y_interval) * y_interval,
-                        round(y_max / y_interval) * y_interval + y_interval,
-                        y_interval)
-
-    # 绘制历史价格
+    # 绘制价格线
     ax1.plot(historical_prices.index, historical_prices.values,
-             color=colors['historical'], linewidth=2, label='历史价格')
+             color=colors['historical'], linewidth=2.2, label='历史价格', marker='.', markersize=3)
 
-    # 绘制预测价格
     if len(prediction_prices) > 0:
-        # 连接点
         last_hist_date = historical_prices.index[-1]
         last_hist_price = historical_prices.iloc[-1]
         first_pred_date = prediction_prices.index[0]
 
-        # 绘制连接线
+        # 绘制预测线
         ax1.plot([last_hist_date, first_pred_date],
                  [last_hist_price, prediction_prices.iloc[0]],
-                 color=colors['prediction'], linewidth=2.5, linestyle='-')
-
-        # 绘制预测线
+                 color=colors['prediction'], linewidth=2.2, linestyle='-')
         ax1.plot(prediction_prices.index, prediction_prices.values,
-                 color=colors['prediction'], linewidth=2.5, label='基础预测')
+                 color=colors['prediction'], linewidth=2.2, label='基础预测', marker='o', markersize=3.5)
 
-        # 绘制增强预测线
-        if enhancement_info and 'enhanced_prediction' in enhancement_info:
-            enhanced_prices = enhancement_info['enhanced_prediction'].set_index(pd.DatetimeIndex(future_dates))['close']
+        if enhanced_prices is not None:
+            ax1.plot([last_hist_date, first_pred_date],
+                     [last_hist_price, enhanced_prices.iloc[0]],
+                     color=colors['enhanced'], linewidth=2.2, linestyle='--')
             ax1.plot(enhanced_prices.index, enhanced_prices.values,
-                     color=colors['enhanced'], linewidth=2.5, linestyle='--', label='增强预测')
+                     color=colors['enhanced'], linewidth=2.2, linestyle='--', label='增强预测', marker='^', markersize=3.5)
 
-        # 标记预测起点
-        ax1.axvline(x=last_hist_date, color='red', linestyle='--', alpha=0.7, linewidth=1)
+        ax1.axvline(x=last_hist_date, color='red', linestyle='--', alpha=0.7, linewidth=1.2)
         ax1.annotate('预测起点', xy=(last_hist_date, last_hist_price),
                      xytext=(10, 10), textcoords='offset points',
                      fontsize=10, fontweight='bold',
-                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-
-    # 设置Y轴范围和刻度
-    ax1.set_ylim(y_min, y_max)
-    ax1.set_yticks(y_ticks)
+                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
+                     arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.1'))
 
     ax1.set_ylabel('收盘价 (元)', fontsize=12, fontweight='bold')
     ax1.legend(loc='upper left', fontsize=11)
     ax1.grid(True, color=colors['grid'], alpha=0.7)
 
-    title = f'{stock_name}({stock_code}) - 综合因素价格预测\n当前价: {current_price:.2f}元 | 增强因子: {enhancement_info["adjustment_factor"]:.3f}' if enhancement_info else f'{stock_name}({stock_code}) - 价格预测\n当前价: {current_price:.2f}元'
-    ax1.set_title(title, fontsize=14, fontweight='bold', pad=20)
-
-    # 设置x轴格式
+    # 标题包含快捷交互说明
+    adj_str = f" | 增强因子: {enhancement_info['adjustment_factor']:.3f}" if enhancement_info else ""
+    title = (
+        f"{stock_name}({stock_code}) - 综合因素价格预测 (当前价: {current_price:.2f}元{adj_str})\n"
+        f"[💡 鼠标滚轮: 缩放时间轴 | 按住左键拖动: 左右平移 | 单击: 查看OHLCV/增强预测 | 双击: 重置视野 | 右键: 清除提示]"
+    )
+    ax1.set_title(title, fontsize=13, fontweight='bold', pad=15)
     ax1.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
     plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
 
     # 2. 成交量图表
     historical_volume = historical_df.set_index('timestamps')['volume']
-    prediction_volume = prediction_df.set_index(pd.DatetimeIndex(future_dates))['volume']
+    prediction_volume = prediction_df.set_index(pd.DatetimeIndex(future_dates[:len(prediction_df)]))['volume']
 
-    # 计算相对成交量（标准化）
-    hist_volume_norm = historical_volume / historical_volume.max()
+    if len(historical_volume) > 0:
+        ax2.bar(historical_volume.index, historical_volume.values,
+                alpha=0.6, color=colors['historical'], label='历史成交量', width=0.8)
     if len(prediction_volume) > 0:
-        pred_volume_norm = prediction_volume / historical_volume.max()
+        ax2.bar(prediction_volume.index, prediction_volume.values,
+                alpha=0.6, color=colors['prediction'], label='预测成交量', width=0.8)
 
-    # 绘制历史成交量
-    ax2.bar(historical_volume.index, hist_volume_norm.values,
-            alpha=0.6, color=colors['historical'], label='历史成交量')
-
-    # 绘制预测成交量
-    if len(prediction_volume) > 0:
-        ax2.bar(prediction_volume.index, pred_volume_norm.values,
-                alpha=0.6, color=colors['prediction'], label='预测成交量')
-
-    ax2.set_ylabel('相对成交量', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('成交量 (股)', fontsize=12, fontweight='bold')
     ax2.legend(loc='upper left', fontsize=11)
     ax2.grid(True, color=colors['grid'], alpha=0.7)
-    ax2.set_ylim(0, 1.2)
-
-    # 设置x轴格式
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x*1e-8:.2f}亿' if x >= 1e8 else (f'{x*1e-4:.0f}万' if x >= 1e4 else f'{x:.0f}')))
     ax2.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m-%d'))
     plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
 
-    # 3. 市场分析子图
+    # 3. 市场分析子图 (ax3, ax4, ax5)
     if enhancement_info:
-        # 因素权重饼图
         factors = ['大盘趋势', '板块共振', '宏观环境', '美国降息', '基本面']
         weights = [25, 25, 20, 10, 20]
         colors_pie = [colors['historical'], colors['prediction'], colors['enhanced'], '#f39c12', '#9b59b6']
@@ -1056,7 +1308,6 @@ def plot_comprehensive_prediction(
         ax3.pie(weights, labels=factors, autopct='%1.0f%%', colors=colors_pie, startangle=90)
         ax3.set_title('因素权重分配', fontweight='bold', fontsize=11)
 
-        # 因素评分柱状图
         scores = [
             enhancement_info['market_analysis']['overall_trend_strength'],
             enhancement_info['sector_analysis']['resonance_score'],
@@ -1074,13 +1325,11 @@ def plot_comprehensive_prediction(
         ax4.set_title('各因素当前评分', fontweight='bold', fontsize=11)
         ax4.grid(True, alpha=0.3)
 
-        # 在柱状图上显示数值
         for i, bar in enumerate(bars):
             height = bar.get_height()
             ax4.text(bar.get_x() + bar.get_width() / 2., height + 0.01,
                      f'{height:.2f}', ha='center', va='bottom', fontsize=8)
 
-        # 市场状态总结
         market_status = enhancement_info['market_analysis']['market_status']
         sector_status = "热门" if enhancement_info['sector_analysis']['is_sector_hot'] else "一般"
         macro_status = "有利" if enhancement_info['macro_analysis']['overall_macro_score'] > 0.6 else "不利"
@@ -1100,18 +1349,13 @@ def plot_comprehensive_prediction(
         ax5.set_title('市场状态总结', fontweight='bold', fontsize=11)
         ax5.set_xticks([])
         ax5.set_yticks([])
-        ax5.spines['top'].set_visible(False)
-        ax5.spines['right'].set_visible(False)
-        ax5.spines['bottom'].set_visible(False)
-        ax5.spines['left'].set_visible(False)
+        for s in ['top', 'right', 'bottom', 'left']:
+            ax5.spines[s].set_visible(False)
 
-        # 4. 详细因素分析
         if 'analysis_summary' in enhancement_info:
             summary = enhancement_info['analysis_summary']
-            drivers_text = "\n".join([f"• {driver}" for driver in summary['key_drivers']]) if summary[
-                'key_drivers'] else "• 暂无明显驱动"
-            risks_text = "\n".join([f"• {risk}" for risk in summary['main_risks']]) if summary[
-                'main_risks'] else "• 风险可控"
+            drivers_text = "\n".join([f"• {driver}" for driver in summary['key_drivers']]) if summary['key_drivers'] else "• 暂无明显驱动"
+            risks_text = "\n".join([f"• {risk}" for risk in summary['main_risks']]) if summary['main_risks'] else "• 风险可控"
 
             detail_text = f"""关键驱动因素:
 {drivers_text}
@@ -1127,19 +1371,356 @@ def plot_comprehensive_prediction(
             ax6.set_title('详细因素分析', fontweight='bold', fontsize=11)
             ax6.set_xticks([])
             ax6.set_yticks([])
-            ax6.spines['top'].set_visible(False)
-            ax6.spines['right'].set_visible(False)
-            ax6.spines['bottom'].set_visible(False)
-            ax6.spines['left'].set_visible(False)
+            for s in ['top', 'right', 'bottom', 'left']:
+                ax6.spines[s].set_visible(False)
+
+    # 记录默认初始视野
+    default_xlim = ax1.get_xlim()
+    default_ylim = ax1.get_ylim()
+
+    # ==================== 交互组件：浮窗、高亮标记与对齐线 ====================
+    annot_ax1 = ax1.annotate(
+        "", xy=(0, 0), xytext=(20, 20), textcoords="offset points",
+        bbox=dict(boxstyle="round4,pad=0.6", fc="#FFFFF2", ec="#2B4C7E", lw=1.5, alpha=0.96),
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color="#2B4C7E", lw=1.5),
+        fontsize=9.5, zorder=40
+    )
+    annot_ax1.set_visible(False)
+    highlight_ax1 = ax1.scatter([], [], s=130, facecolors='none', edgecolors='#FF0000', linewidths=2.2, zorder=45)
+
+    annot_ax2 = ax2.annotate(
+        "", xy=(0, 0), xytext=(20, 20), textcoords="offset points",
+        bbox=dict(boxstyle="round4,pad=0.6", fc="#F0F8FF", ec="#E65100", lw=1.5, alpha=0.96),
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color="#E65100", lw=1.5),
+        fontsize=9.5, zorder=40
+    )
+    annot_ax2.set_visible(False)
+    highlight_ax2 = ax2.scatter([], [], s=110, facecolors='none', edgecolors='#E65100', linewidths=2.2, zorder=45)
+
+    vline_ax1 = ax1.axvline(x=np.nan, color='#888888', linestyle=':', alpha=0.7, linewidth=1.2, visible=False)
+    vline_ax2 = ax2.axvline(x=np.nan, color='#888888', linestyle=':', alpha=0.7, linewidth=1.2, visible=False)
+
+    drag_state = {
+        'is_pressed': False,
+        'is_dragging': False,
+        'press_x': None,
+        'press_xlim': None,
+    }
+
+    def auto_adjust_axes():
+        """根据当前可见时间范围自适应Y轴"""
+        cur_xlim = ax1.get_xlim()
+        mask = (all_x_nums >= cur_xlim[0]) & (all_x_nums <= cur_xlim[1])
+        if np.any(mask):
+            sub_df = combined_ohlcv.iloc[mask]
+            vis_high = sub_df['high'].max() if 'high' in sub_df.columns else sub_df['close'].max()
+            vis_low = sub_df['low'].min() if 'low' in sub_df.columns else sub_df['close'].min()
+            if pd.notnull(vis_high) and pd.notnull(vis_low) and vis_high > vis_low:
+                p_margin = (vis_high - vis_low) * 0.12
+                ax1.set_ylim([max(0, vis_low - p_margin), vis_high + p_margin])
+
+            vis_vol = sub_df['volume'].max() if 'volume' in sub_df.columns else None
+            if pd.notnull(vis_vol) and vis_vol > 0:
+                ax2.set_ylim([0, vis_vol * 1.18])
+
+    def on_scroll(event):
+        """鼠标滚轮缩放：以鼠标所在时间点为中心等比放大/缩小"""
+        if event.inaxes not in [ax1, ax2] or event.xdata is None:
+            return
+
+        cur_xlim = ax1.get_xlim()
+        cur_xrange = cur_xlim[1] - cur_xlim[0]
+
+        is_zoom_in = False
+        if hasattr(event, 'step') and event.step != 0:
+            is_zoom_in = event.step > 0
+        elif hasattr(event, 'button'):
+            is_zoom_in = (event.button == 'up')
+
+        scale_factor = 0.8 if is_zoom_in else 1.25
+        new_range = cur_xrange * scale_factor
+
+        total_data_range = max(all_x_nums) - min(all_x_nums)
+        if new_range < 3 or new_range > total_data_range * 2.5:
+            return
+
+        xdata = event.xdata
+        ratio = (xdata - cur_xlim[0]) / cur_xrange
+        new_xmin = xdata - new_range * ratio
+        new_xmax = xdata + new_range * (1.0 - ratio)
+
+        ax1.set_xlim([new_xmin, new_xmax])
+        auto_adjust_axes()
+        fig.canvas.draw_idle()
+
+    def on_press(event):
+        """鼠标按下"""
+        if event.inaxes not in [ax1, ax2]:
+            return
+        if event.button == 1:
+            drag_state['is_pressed'] = True
+            drag_state['is_dragging'] = False
+            drag_state['press_x'] = event.x
+            drag_state['press_xlim'] = ax1.get_xlim()
+        elif event.button == 3:
+            annot_ax1.set_visible(False)
+            annot_ax2.set_visible(False)
+            highlight_ax1.set_offsets(np.empty((0, 2)))
+            highlight_ax2.set_offsets(np.empty((0, 2)))
+            vline_ax1.set_visible(False)
+            vline_ax2.set_visible(False)
+            fig.canvas.draw_idle()
+
+    def on_motion(event):
+        """鼠标拖拽平移"""
+        if not drag_state['is_pressed'] or drag_state['press_x'] is None or event.x is None:
+            return
+        dx_pixels = event.x - drag_state['press_x']
+        if abs(dx_pixels) > 3:
+            drag_state['is_dragging'] = True
+        if drag_state['is_dragging']:
+            inv = ax1.transData.inverted()
+            x0_data = inv.transform((drag_state['press_x'], 0))[0]
+            x1_data = inv.transform((event.x, 0))[0]
+            dx_data = x1_data - x0_data
+            orig_xmin, orig_xmax = drag_state['press_xlim']
+            ax1.set_xlim([orig_xmin - dx_data, orig_xmax - dx_data])
+            auto_adjust_axes()
+            fig.canvas.draw_idle()
+
+    def handle_click_info(event):
+        """处理单击展示 OHLCV 与详细信息"""
+        if event.xdata is None or event.inaxes not in [ax1, ax2]:
+            return
+        dist = np.abs(all_x_nums - event.xdata)
+        idx = int(np.argmin(dist))
+        nearest_x = all_x_nums[idx]
+        row = combined_ohlcv.iloc[idx]
+        dt = all_dates[idx]
+
+        vline_ax1.set_xdata([nearest_x, nearest_x])
+        vline_ax1.set_visible(True)
+        vline_ax2.set_xdata([nearest_x, nearest_x])
+        vline_ax2.set_visible(True)
+
+        if event.inaxes == ax1:
+            curr_open = row.get('open', np.nan)
+            curr_high = row.get('high', np.nan)
+            curr_low = row.get('low', np.nan)
+            curr_close = row.get('close', np.nan)
+            curr_vol = row.get('volume', np.nan)
+            curr_amt = row.get('amount', np.nan)
+            dtype = row.get('data_type', '数据')
+
+            # 检查是否有增强预测数据
+            has_enh = (dtype == '预测' and 'enhanced_close' in row and pd.notnull(row['enhanced_close']))
+            enh_open = row.get('enhanced_open', curr_open)
+            enh_high = row.get('enhanced_high', curr_high)
+            enh_low = row.get('enhanced_low', curr_low)
+            enh_close = row.get('enhanced_close', curr_close)
+            enh_vol = row.get('enhanced_volume', curr_vol)
+
+            # 智能判断点击的是增强预测点还是基础预测点
+            is_clicking_enhanced = False
+            target_y = curr_close
+            highlight_color = '#1f77b4'  # 历史默认蓝色
+
+            if has_enh and event.ydata is not None:
+                dist_base = abs(event.ydata - curr_close)
+                dist_enh = abs(event.ydata - enh_close)
+                if dist_enh < dist_base:
+                    is_clicking_enhanced = True
+                    target_y = enh_close
+                    highlight_color = '#2ca02c'  # 增强色绿色
+                else:
+                    target_y = curr_close
+                    highlight_color = '#ff7f0e'  # 基础预测色橙色
+            elif dtype == '预测':
+                highlight_color = '#ff7f0e'
+
+            # 1. 点击增强预测点展示完整增强 OHLCV
+            if is_clicking_enhanced:
+                prev_enh_close = combined_ohlcv.iloc[idx - 1].get('enhanced_close', combined_ohlcv.iloc[idx - 1]['close']) if idx > 0 else enh_close
+                enh_chg = enh_close - prev_enh_close
+                enh_chg_pct = (enh_chg / prev_enh_close) * 100 if prev_enh_close else 0.0
+                color_mark = "🔴" if enh_chg >= 0 else "🟢"
+                enh_diff = enh_close - curr_close
+                enh_diff_pct = (enh_diff / curr_close) * 100 if curr_close else 0.0
+                diff_mark = "📈" if enh_diff >= 0 else "📉"
+                enh_vol_hands = enh_vol / 100 if pd.notnull(enh_vol) else 0
+
+                ohlcv_text = (
+                    f"📅 {dt.strftime('%Y-%m-%d')} 【🚀 增强预测行情 (多维市场增强)】\n"
+                    f"──────────────────────────────────\n"
+                    f"增强开盘 (Open):   {enh_open:.2f} 元\n"
+                    f"增强最高 (High):   {enh_high:.2f} 元\n"
+                    f"增强最低 (Low):    {enh_low:.2f} 元\n"
+                    f"增强收盘 (Close):  {enh_close:.2f} 元\n"
+                    f"增强涨跌 (Change): {color_mark} {enh_chg:+.2f} ({enh_chg_pct:+.2f}%)\n"
+                    f"增强成交量(Volume):{enh_vol:,.0f} 股 ({enh_vol_hands:,.0f} 手)\n"
+                    f"──────────────────────────────────\n"
+                    f"🔍 基础模型预测对照:\n"
+                    f"基础开盘 / 最高:   {curr_open:.2f} / {curr_high:.2f} 元\n"
+                    f"基础最低 / 收盘:   {curr_low:.2f} / {curr_close:.2f} 元\n"
+                    f"环境修正幅度:      {diff_mark} {enh_diff:+.2f} ({enh_diff_pct:+.2f}%)\n"
+                    f"市场调整因子:      {enhancement_info['adjustment_factor']:.4f}"
+                )
+
+            # 2. 点击基础预测点展示基础 OHLCV + 增强对照
+            elif dtype == '预测':
+                prev_close = combined_ohlcv.iloc[idx - 1]['close'] if idx > 0 else curr_close
+                chg = curr_close - prev_close
+                chg_pct = (chg / prev_close) * 100 if prev_close else 0.0
+                color_mark = "🔴" if chg >= 0 else "🟢"
+                vol_hands = curr_vol / 100 if pd.notnull(curr_vol) else 0
+
+                enh_block = ""
+                if has_enh:
+                    enh_diff = enh_close - curr_close
+                    enh_diff_pct = (enh_diff / curr_close) * 100 if curr_close else 0.0
+                    diff_mark = "📈" if enh_diff >= 0 else "📉"
+                    enh_vol_hands = enh_vol / 100 if pd.notnull(enh_vol) else 0
+                    enh_block = (
+                        f"\n──────────────────────────────────\n"
+                        f"🚀 对应增强预测 OHLCV:\n"
+                        f"增强开盘: {enh_open:.2f} | 增强最高: {enh_high:.2f}\n"
+                        f"增强最低: {enh_low:.2f} | 增强收盘: {enh_close:.2f} ({diff_mark} {enh_diff:+.2f})\n"
+                        f"增强成交量: {enh_vol:,.0f} 股 ({enh_vol_hands:,.0f} 手)"
+                    )
+
+                ohlcv_text = (
+                    f"📅 {dt.strftime('%Y-%m-%d')} 【🎯 基础预测行情】\n"
+                    f"──────────────────────────────────\n"
+                    f"开盘价 (Open):   {curr_open:.2f} 元\n"
+                    f"最高价 (High):   {curr_high:.2f} 元\n"
+                    f"最低价 (Low):    {curr_low:.2f} 元\n"
+                    f"收盘价 (Close):  {curr_close:.2f} 元\n"
+                    f"基础涨跌 (Change): {color_mark} {chg:+.2f} ({chg_pct:+.2f}%)\n"
+                    f"基础成交量:      {curr_vol:,.0f} 股 ({vol_hands:,.0f} 手)"
+                    f"{enh_block}"
+                )
+
+            # 3. 历史数据展示真实 OHLCV
+            else:
+                prev_close = combined_ohlcv.iloc[idx - 1]['close'] if idx > 0 else curr_close
+                chg = curr_close - prev_close
+                chg_pct = (chg / prev_close) * 100 if prev_close else 0.0
+                color_mark = "🔴" if chg >= 0 else "🟢"
+                vol_hands = curr_vol / 100 if pd.notnull(curr_vol) else 0
+                amt_str = f"{curr_amt / 1e8:.2f} 亿元" if pd.notnull(curr_amt) and curr_amt >= 1e8 else (f"{curr_amt / 1e4:.2f} 万元" if pd.notnull(curr_amt) and curr_amt > 0 else "无")
+
+                ohlcv_text = (
+                    f"📅 {dt.strftime('%Y-%m-%d')} 【历史行情】\n"
+                    f"──────────────────────────────────\n"
+                    f"开盘价 (Open):   {curr_open:.2f} 元\n"
+                    f"最高价 (High):   {curr_high:.2f} 元\n"
+                    f"最低价 (Low):    {curr_low:.2f} 元\n"
+                    f"收盘价 (Close):  {curr_close:.2f} 元\n"
+                    f"涨跌幅 (Change): {color_mark} {chg:+.2f} ({chg_pct:+.2f}%)\n"
+                    f"成交量 (Volume): {curr_vol:,.0f} 股 ({vol_hands:,.0f} 手)\n"
+                    f"成交额 (Amount): {amt_str}"
+                )
+
+            annot_ax1.xy = (nearest_x, target_y)
+            annot_ax1.set_text(ohlcv_text)
+            annot_ax1.set_visible(True)
+            annot_ax2.set_visible(False)
+            highlight_ax1.set_offsets([[nearest_x, target_y]])
+            highlight_ax1.set_edgecolors([highlight_color])
+            highlight_ax2.set_offsets(np.empty((0, 2)))
+            fig.canvas.draw_idle()
+
+        elif event.inaxes == ax2:
+            curr_vol = row.get('volume', 0)
+            curr_amt = row.get('amount', 0)
+            curr_close = row.get('close', np.nan)
+            dtype = row.get('data_type', '数据')
+
+            vol_hands = curr_vol / 100 if pd.notnull(curr_vol) else 0
+            if curr_vol >= 1e8:
+                vol_scale = f"{curr_vol / 1e8:.2f} 亿股"
+            elif curr_vol >= 1e4:
+                vol_scale = f"{curr_vol / 1e4:.2f} 万股"
+            else:
+                vol_scale = f"{curr_vol:,.0f} 股"
+
+            enh_vol_str = ""
+            if dtype == '预测' and 'enhanced_volume' in row and pd.notnull(row['enhanced_volume']):
+                enh_vol = row['enhanced_volume']
+                enh_vol_hands = enh_vol / 100
+                diff_vol = enh_vol - curr_vol
+                enh_vol_str = (
+                    f"\n──────────────────────────────────\n"
+                    f"🚀 增强预测成交量:\n"
+                    f"增强量:  {enh_vol:,.0f} 股 ({enh_vol_hands:,.0f} 手)\n"
+                    f"环境联动调整: {diff_vol:+,.0f} 股"
+                )
+
+            amt_str = f"{curr_amt / 1e8:.2f} 亿元" if pd.notnull(curr_amt) and curr_amt >= 1e8 else (f"{curr_amt / 1e4:.2f} 万元" if pd.notnull(curr_amt) and curr_amt > 0 else "无")
+
+            vol_text = (
+                f"📊 {dt.strftime('%Y-%m-%d')} 【{dtype}成交量】\n"
+                f"──────────────────────────────────\n"
+                f"基础成交量 (股): {curr_vol:,.0f} 股 ({vol_scale})\n"
+                f"基础成交量 (手): {vol_hands:,.0f} 手\n"
+                f"成交额 (Amount): {amt_str}\n"
+                f"对应收盘价:     {curr_close:.2f} 元"
+                f"{enh_vol_str}"
+            )
+
+            annot_ax2.xy = (nearest_x, curr_vol)
+            annot_ax2.set_text(vol_text)
+            annot_ax2.set_visible(True)
+            annot_ax1.set_visible(False)
+            highlight_ax2.set_offsets([[nearest_x, curr_vol]])
+            highlight_ax1.set_offsets(np.empty((0, 2)))
+            fig.canvas.draw_idle()
+
+    def on_release(event):
+        """鼠标松开"""
+        if not drag_state['is_pressed']:
+            return
+        was_dragging = drag_state['is_dragging']
+        drag_state['is_pressed'] = False
+        drag_state['is_dragging'] = False
+        drag_state['press_x'] = None
+        drag_state['press_xlim'] = None
+
+        if was_dragging:
+            return
+
+        if event.dblclick:
+            ax1.set_xlim(default_xlim)
+            ax1.set_ylim(default_ylim)
+            annot_ax1.set_visible(False)
+            annot_ax2.set_visible(False)
+            highlight_ax1.set_offsets(np.empty((0, 2)))
+            highlight_ax2.set_offsets(np.empty((0, 2)))
+            vline_ax1.set_visible(False)
+            vline_ax2.set_visible(False)
+            auto_adjust_axes()
+            fig.canvas.draw_idle()
+            return
+
+        handle_click_info(event)
+
+    # 注册事件监听
+    fig.canvas.mpl_connect('scroll_event', on_scroll)
+    fig.canvas.mpl_connect('button_press_event', on_press)
+    fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('button_release_event', on_release)
 
     plt.tight_layout()
 
-    # 保存图片
+    # 保存静态图片 (保存时浮窗隐藏)
     chart_filename = os.path.join(output_dir, f'{stock_code}_comprehensive_prediction.png')
     plt.savefig(chart_filename, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"📊 综合预测图表已保存: {chart_filename}")
 
-    plt.show()
+    try:
+        plt.show()
+    except Exception as e:
+        print(f"⚠️ 交互窗口展示跳过: {e}")
 
     return historical_prices, prediction_prices
 
@@ -1176,7 +1757,7 @@ def run_comprehensive_kronos_prediction(stock_code, stock_name, data_dir, pred_d
 
         # 3. 实例化预测器
         print("步骤3: 初始化预测器...")
-        predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
+        predictor = KronosPredictor(model, tokenizer, device=None, max_context=512)
         print("✅ 预测器初始化完成")
 
         # 4. 准备数据
@@ -1270,12 +1851,13 @@ def run_comprehensive_kronos_prediction(stock_code, stock_name, data_dir, pred_d
             print(f"预测期间: {pred_len} 个交易日")
 
             # 输出关键因素
+            summary = enhancement_info.get('analysis_summary') or generate_analysis_summary(enhancement_info)
             print(f"\n🔑 关键影响因素:")
-            for driver in enhancement_info['analysis_summary']['key_drivers']:
+            for driver in summary.get('key_drivers', []):
                 print(f"  ✅ {driver}")
-            for risk in enhancement_info['analysis_summary']['main_risks']:
+            for risk in summary.get('main_risks', []):
                 print(f"  ⚠️  {risk}")
-            print(f"  💡 投资建议: {enhancement_info['analysis_summary']['investment_suggestion']}")
+            print(f"  💡 投资建议: {summary.get('investment_suggestion', '暂无')}")
 
             # 保存详细预测数据
             prediction_details = pd.DataFrame({
@@ -1304,12 +1886,13 @@ def main():
     主函数：综合版Kronos模型股票预测系统
     """
     # ==================== 配置参数 ====================
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
     STOCK_CONFIG = {
         "stock_code": "603288",
         "stock_name": "海天味业",
-        "data_dir": r"D:\lianghuajiaoyi\Kronos\examples\data",
+        "data_dir": os.path.join(CURRENT_DIR, "data"),
         "pred_days": 60,
-        "output_dir": r"D:\lianghuajiaoyi\Kronos\examples\yuce",
+        "output_dir": os.path.join(CURRENT_DIR, "yuce"),
         "history_years": 1
     }
 
