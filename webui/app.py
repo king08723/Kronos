@@ -642,8 +642,8 @@ def load_model():
         model_config = AVAILABLE_MODELS[model_key]
         
         # Load tokenizer and model
-        tokenizer = KronosTokenizer.from_pretrained(model_config['tokenizer_id'])
-        model = Kronos.from_pretrained(model_config['model_id'])
+        tokenizer = KronosTokenizer.from_pretrained(model_config['tokenizer_id']).eval()
+        model = Kronos.from_pretrained(model_config['model_id']).eval()
         
         # Create predictor
         predictor = KronosPredictor(model, tokenizer, device=device, max_context=model_config['context_length'])

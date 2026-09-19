@@ -8,8 +8,8 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei']
+# 设置中文字体（兼容 macOS 和 Windows）
+plt.rcParams['font.sans-serif'] = ['PingFang SC', 'Arial Unicode MS', 'Heiti SC', 'SimHei', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
 
@@ -36,10 +36,23 @@ class KronosBacktester:
         """
         加载历史数据
         """
-        csv_file = os.path.join(self.data_dir, f"{stock_code}_stock_data.csv")
-        if not os.path.exists(csv_file):
-            raise FileNotFoundError(f"数据文件不存在: {csv_file}")
+        # 兼容多种历史数据文件命名
+        possible_files = [
+            os.path.join(self.data_dir, f"{stock_code}_stock_data.csv"),
+            os.path.join(self.data_dir, f"{stock_code}_all_history.csv"),
+            os.path.join(self.data_dir, f"{stock_code}.csv")
+        ]
 
+        csv_file = None
+        for f in possible_files:
+            if os.path.exists(f):
+                csv_file = f
+                break
+
+        if csv_file is None:
+            raise FileNotFoundError(f"数据文件不存在，已查找路径: {possible_files}")
+
+        print(f"✅ 找到历史数据文件: {csv_file}")
         df = pd.read_csv(csv_file, encoding='utf-8-sig')
 
         # 检查列名并标准化
@@ -75,6 +88,7 @@ class KronosBacktester:
         pred_files = [
             os.path.join(self.model_dir, f"{stock_code}_kronos_predictions.csv"),
             os.path.join(self.model_dir, f"{stock_code}_detailed_predictions.csv"),
+            os.path.join(self.model_dir, f"{stock_code}_comprehensive_predictions.csv"),
             os.path.join(self.model_dir, f"{stock_code}_predictions.csv")
         ]
 
@@ -88,17 +102,20 @@ class KronosBacktester:
         if pred_df is None:
             raise FileNotFoundError(f"未找到预测文件，请检查目录: {self.model_dir}")
 
-        # 标准化列名
+        # 标准化列名（兼容不同预测输出格式）
         column_mapping = {
             '日期': 'date',
+            '预测收盘价_均值': 'predicted_close',
             '预测收盘价': 'predicted_close',
+            '基础预测收盘价': 'predicted_close',
+            '增强预测收盘价': 'predicted_close',
             '收盘价': 'predicted_close',
             '预测成交量': 'predicted_volume',
             '成交量': 'predicted_volume'
         }
 
         for old_col, new_col in column_mapping.items():
-            if old_col in pred_df.columns:
+            if old_col in pred_df.columns and new_col not in pred_df.columns:
                 pred_df = pred_df.rename(columns={old_col: new_col})
 
         pred_df['date'] = pd.to_datetime(pred_df['date'])
@@ -150,8 +167,8 @@ class KronosBacktester:
         combined['signal'] = np.where(combined['pred_return'] > threshold, 1,  # 买入信号
                                       np.where(combined['pred_return'] < -threshold, -1, 0))  # 卖出信号
 
-        # 过滤信号：避免频繁交易
-        combined['position'] = combined['signal'].replace(to_replace=0, method='ffill').fillna(0)
+        # 过滤信号：避免频繁交易（信号前向填充维持仓位）
+        combined['position'] = combined['signal'].replace(0, np.nan).ffill().fillna(0)
 
         return combined
 
@@ -290,7 +307,7 @@ class KronosBacktester:
 
         return metrics
 
-    def plot_backtest_results(self, backtest_results, metrics, stock_code, output_dir):
+    def plot_backtest_results(self, backtest_results, metrics, stock_code, output_dir, show_plot=True):
         """
         绘制回测结果图表
         """
@@ -349,14 +366,18 @@ class KronosBacktester:
         plt.tight_layout()
 
         # 保存图表
-        os.makedirs(output_dir, exist_ok=True)
-        chart_file = os.path.join(output_dir, f'{stock_code}_backtest_results.png')
-        plt.savefig(chart_file, dpi=300, bbox_inches='tight')
-        print(f"📊 回测图表已保存: {chart_file}")
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            chart_file = os.path.join(output_dir, f'{stock_code}_backtest_results.png')
+            plt.savefig(chart_file, dpi=300, bbox_inches='tight')
+            print(f"📊 回测图表已保存: {chart_file}")
 
-        plt.show()
+        if show_plot:
+            plt.show()
 
-    def run_complete_backtest(self, stock_code, output_dir, threshold=0.02):
+        return fig
+
+    def run_complete_backtest(self, stock_code, output_dir, threshold=0.02, show_plot=False):
         """
         运行完整的回测流程
         """
@@ -383,7 +404,7 @@ class KronosBacktester:
 
             # 5. 绘制结果
             print("步骤5: 生成回测图表...")
-            self.plot_backtest_results(backtest_results, metrics, stock_code, output_dir)
+            fig = self.plot_backtest_results(backtest_results, metrics, stock_code, output_dir, show_plot=show_plot)
 
             # 6. 打印详细报告
             print("\n" + "=" * 70)
@@ -403,53 +424,262 @@ class KronosBacktester:
                 print(f"  交易{i}: {trade['date'].strftime('%Y-%m-%d')} "
                       f"{trade['action']} {abs(trade['shares'])}股 @ {trade['price']:.2f}元")
 
-            return metrics, backtest_results, trades
+            return metrics, backtest_results, trades, fig
 
         except Exception as e:
             print(f"❌ 回测过程中出现错误: {e}")
             import traceback
             traceback.print_exc()
-            return None, None, None
+            return None, None, None, None
 
 
-def main():
+def get_available_stocks(data_dir, model_dir):
     """
-    主函数：运行Kronos模型回测
+    扫描数据目录与预测目录，提取可用的股票代码列表
     """
-    # 配置参数
+    stocks = set()
+    if os.path.exists(data_dir):
+        for f in os.listdir(data_dir):
+            if f.endswith('_stock_data.csv') or f.endswith('_all_history.csv'):
+                code = f.split('_')[0]
+                if code.isalnum():
+                    stocks.add(code)
+    if os.path.exists(model_dir):
+        for f in os.listdir(model_dir):
+            if f.endswith('_predictions.csv') or f.endswith('_detailed_predictions.csv') or f.endswith('_comprehensive_predictions.csv'):
+                code = f.split('_')[0]
+                if code.isalnum():
+                    stocks.add(code)
+    stock_list = sorted(list(stocks))
+    return stock_list if stock_list else ["300418"]
+
+
+def streamlit_main():
+    """
+    Streamlit Web 交互看板入口
+    """
+    import streamlit as st
+
+    st.set_page_config(
+        page_title="Kronos 量化回测看板",
+        page_icon="📈",
+        layout="wide"
+    )
+
+    st.title("📈 Kronos 量化模型回测系统")
+    st.caption("基于时间序列预测模型的量化交易信号生成、组合回测与风险归因看板")
+
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(CURRENT_DIR, "data")
+    model_dir = os.path.join(CURRENT_DIR, "yuce")
+    output_dir = os.path.join(CURRENT_DIR, "backtest")
+
+    available_stocks = get_available_stocks(data_dir, model_dir)
+
+    with st.sidebar:
+        st.header("⚙️ 回测策略配置")
+
+        default_idx = available_stocks.index("300418") if "300418" in available_stocks else 0
+        stock_option = st.selectbox(
+            "选择股票标的",
+            options=available_stocks + ["自定义输入"],
+            index=default_idx
+        )
+
+        if stock_option == "自定义输入":
+            selected_stock = st.text_input("输入股票代码 (如 300418)", value="300418")
+        else:
+            selected_stock = stock_option
+
+        initial_capital = st.number_input(
+            "初始账户资金 (元)",
+            min_value=10000,
+            max_value=10000000,
+            value=100000,
+            step=10000
+        )
+
+        threshold_pct = st.slider(
+            "交易触发阈值 (%)",
+            min_value=0.5,
+            max_value=10.0,
+            value=2.0,
+            step=0.5,
+            help="当模型预测的预期涨跌幅超过该阈值时触发买入或卖出信号"
+        )
+        threshold = threshold_pct / 100.0
+
+        run_btn = st.button("🚀 运行回测分析", type="primary")
+
+    # 首次加载或点击按钮时执行回测
+    if "backtest_data" not in st.session_state or run_btn:
+        with st.spinner(f"正在加载 {selected_stock} 历史数据并运行回测..."):
+            backtester = KronosBacktester(
+                data_dir=data_dir,
+                model_dir=model_dir,
+                initial_capital=initial_capital
+            )
+            metrics, backtest_results, trades, fig = backtester.run_complete_backtest(
+                stock_code=selected_stock,
+                output_dir=output_dir,
+                threshold=threshold,
+                show_plot=False
+            )
+            if metrics is not None:
+                st.session_state["backtest_data"] = {
+                    "stock_code": selected_stock,
+                    "initial_capital": initial_capital,
+                    "metrics": metrics,
+                    "backtest_results": backtest_results,
+                    "trades": trades,
+                    "fig": fig
+                }
+            else:
+                st.error(f"❌ 未能完成 {selected_stock} 的回测，请检查数据文件和预测文件是否存在！")
+
+    if "backtest_data" in st.session_state:
+        data = st.session_state["backtest_data"]
+        metrics = data["metrics"]
+        backtest_results = data["backtest_results"]
+        trades = data["trades"]
+        fig = data["fig"]
+        stock_code = data["stock_code"]
+        init_cap = data.get("initial_capital", 100000)
+
+        # 1. 核心量化指标卡片
+        with st.container(border=True):
+            st.subheader(f"📊 {stock_code} 核心量化绩效概览")
+            c1, c2, c3, c4, c5 = st.columns(5)
+
+            tot_ret = metrics['总收益率']
+            c1.metric(
+                "总收益率",
+                f"{tot_ret:.2%}",
+                delta=f"{tot_ret:.2%}",
+                delta_color="normal"
+            )
+            c2.metric(
+                "年化收益率",
+                f"{metrics['年化收益率']:.2%}"
+            )
+            c3.metric(
+                "夏普比率",
+                f"{metrics['夏普比率']:.2f}"
+            )
+            c4.metric(
+                "最大回撤",
+                f"{metrics['最大回撤']:.2%}",
+                delta_color="inverse"
+            )
+            final_cap = metrics['最终资金']
+            c5.metric(
+                "最终净值 (元)",
+                f"¥{final_cap:,.2f}",
+                delta=f"{(final_cap - init_cap):+,.2f}元"
+            )
+
+        # 统计小面板
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.info(f"📈 **年化波动率**: {metrics['波动率']:.2%}")
+        sc2.info(f"🎯 **交易胜率**: {metrics['胜率']:.2%}")
+        sc3.info(f"🔄 **总交易次数**: {metrics['交易次数']} 次")
+        sc4.info(f"💰 **单笔平均收益**: {metrics['平均交易收益']:.2%}")
+
+        # 2. 标签页展示
+        tab_chart, tab_trades, tab_data = st.tabs([
+            "📈 综合回测曲线 (资金/基准/回撤)",
+            "📋 交易执行明细",
+            "📑 每日账户净值记录"
+        ])
+
+        with tab_chart:
+            if fig is not None:
+                st.pyplot(fig)
+            else:
+                st.warning("暂无图表数据")
+
+        with tab_trades:
+            if trades:
+                trade_df = pd.DataFrame(trades)
+                if 'shares' in trade_df.columns:
+                    trade_df['shares'] = trade_df['shares'].apply(lambda x: abs(int(x)))
+                if 'price' in trade_df.columns:
+                    trade_df['price'] = trade_df['price'].apply(lambda x: f"¥{x:.2f}")
+                if 'capital' in trade_df.columns:
+                    trade_df['capital'] = trade_df['capital'].apply(lambda x: f"¥{x:,.2f}")
+                trade_df.rename(columns={
+                    'date': '成交日期',
+                    'action': '买卖方向',
+                    'price': '成交单价',
+                    'shares': '成交股数',
+                    'capital': '变动后账户资金'
+                }, inplace=True)
+                st.dataframe(trade_df, width="stretch")
+            else:
+                st.info("在当前阈值与时序区间内，策略未触发任何成交动作。")
+
+        with tab_data:
+            display_df = backtest_results.copy()
+            st.dataframe(display_df, width="stretch")
+
+
+def cli_main():
+    """
+    终端命令行入口（兼容 python run_backtest_kronos.py [stock_code]）
+    """
+    import sys
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+    target_stock = sys.argv[1] if len(sys.argv) > 1 else "300418"
+
     BACKTEST_CONFIG = {
-        "stock_code": "000831",  # 要回测的股票代码
-        "data_dir": os.path.join(CURRENT_DIR, "data"),  # 历史数据目录
-        "model_dir": os.path.join(CURRENT_DIR, "yuce"),  # 模型预测结果目录
-        "output_dir": os.path.join(CURRENT_DIR, "backtest"),  # 回测结果输出目录
-        "initial_capital": 100000,  # 初始资金
-        "threshold": 0.02  # 交易阈值（2%）
+        "stock_code": target_stock,
+        "data_dir": os.path.join(CURRENT_DIR, "data"),
+        "model_dir": os.path.join(CURRENT_DIR, "yuce"),
+        "output_dir": os.path.join(CURRENT_DIR, "backtest"),
+        "initial_capital": 100000,
+        "threshold": 0.02
     }
 
-    print("🤖 Kronos模型回测系统")
+    print("🤖 Kronos模型回测系统 (CLI 模式)")
     print("=" * 50)
     print(f"回测股票: {BACKTEST_CONFIG['stock_code']}")
     print(f"初始资金: {BACKTEST_CONFIG['initial_capital']:,.0f}元")
     print(f"交易阈值: {BACKTEST_CONFIG['threshold']:.1%}")
     print()
 
-    # 创建回测器并运行
     backtester = KronosBacktester(
         data_dir=BACKTEST_CONFIG["data_dir"],
         model_dir=BACKTEST_CONFIG["model_dir"],
         initial_capital=BACKTEST_CONFIG["initial_capital"]
     )
 
-    metrics, results, trades = backtester.run_complete_backtest(
+    metrics, results, trades, fig = backtester.run_complete_backtest(
         stock_code=BACKTEST_CONFIG["stock_code"],
         output_dir=BACKTEST_CONFIG["output_dir"],
-        threshold=BACKTEST_CONFIG["threshold"]
+        threshold=BACKTEST_CONFIG["threshold"],
+        show_plot=True
     )
 
     if metrics:
         print(f"\n✅ {BACKTEST_CONFIG['stock_code']} 回测完成!")
         print(f"📁 结果保存在: {BACKTEST_CONFIG['output_dir']}")
+
+
+def main():
+    """
+    自适应主函数：自动识别 Streamlit 运行环境与 CLI 命令行环境
+    """
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        in_streamlit = get_script_run_ctx() is not None
+    except Exception:
+        in_streamlit = False
+
+    if in_streamlit:
+        streamlit_main()
+    else:
+        cli_main()
 
 
 if __name__ == "__main__":
