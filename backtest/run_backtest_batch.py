@@ -11,8 +11,8 @@ Kronos 批量量化回测系统 (Batch Stock Backtest Engine)
    位置参数或内置默认配置。
 2. 多线程并发数据准备：多源行情并发拉取，时效感知缓存判定。
 3. 预测与回测隔离编排：
-   - 预测缓存共享 examples/yuce/，与单股 --auto 模式完全复用；
-   - 回测输出隔离于 examples/backtest_batch/{stock_code}/。
+   - 预测缓存共享 backtest/yuce/ 或 examples/yuce/，与单股 --auto 模式完全复用；
+   - 回测输出隔离于 backtest/batch/{stock_code}/。
 4. 容错与异常隔离：单只标的失败不影响整体流程。
 5. 默认串行，支持 --parallel-stocks N 并行。
 6. 绩效大盘排行榜：batch_backtest_ranking.csv。
@@ -41,11 +41,20 @@ warnings.filterwarnings('ignore')
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
-# 行情与预测缓存仍在 examples/，与预测脚本共用，不随回测脚本搬走
 EXAMPLES_DIR = os.path.join(PROJECT_ROOT, "examples")
 for p in [PROJECT_ROOT, CURRENT_DIR, EXAMPLES_DIR]:
     if p not in sys.path:
         sys.path.insert(0, p)
+
+def resolve_data_dir() -> str:
+    local_data = os.path.join(CURRENT_DIR, "data")
+    os.makedirs(local_data, exist_ok=True)
+    return local_data
+
+def resolve_pred_dir() -> str:
+    local_pred = os.path.join(CURRENT_DIR, "yuce")
+    os.makedirs(local_pred, exist_ok=True)
+    return local_pred
 
 from run_backtest_kronos_pro import (
     KronosDataFetcher,
@@ -601,11 +610,14 @@ def cli_main():
                         help="股票回测并发数 (默认1=串行)")
     parser.add_argument("--no-plots", action="store_true")
     parser.add_argument("--data-dir", type=str,
-                        default=os.path.join(EXAMPLES_DIR, "data"))
+                        default=resolve_data_dir(),
+                        help="行情数据目录（默认优先 backtest/data，回退 examples/data）")
     parser.add_argument("--pred-dir", type=str,
-                        default=os.path.join(EXAMPLES_DIR, "yuce"))
+                        default=resolve_pred_dir(),
+                        help="预测数据目录（默认优先 backtest/yuce，回退 examples/yuce）")
     parser.add_argument("--output-dir", type=str,
-                        default=os.path.join(EXAMPLES_DIR, "backtest_batch"))
+                        default=os.path.join(CURRENT_DIR, "batch"),
+                        help="回测结果输出目录（默认 backtest/batch）")
 
     args = parser.parse_args()
 

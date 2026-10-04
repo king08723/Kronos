@@ -126,13 +126,27 @@ warnings.filterwarnings('ignore')
 plt.rcParams['font.sans-serif'] = ['PingFang SC', 'Arial Unicode MS', 'Heiti SC', 'SimHei', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
-# 脚本位于仓库根目录 backtest/；行情、预测缓存与回测产物仍留在 examples/
+# 脚本位于仓库根目录 backtest/；产物收敛至 backtest/output/
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 EXAMPLES_DIR = os.path.join(PROJECT_ROOT, "examples")
 for _p in (PROJECT_ROOT, SCRIPT_DIR, EXAMPLES_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+
+def resolve_data_dir() -> str:
+    """回测行情数据存储目录：全部固定收敛至 backtest/data"""
+    local_data = os.path.join(SCRIPT_DIR, "data")
+    os.makedirs(local_data, exist_ok=True)
+    return local_data
+
+
+def resolve_pred_dir() -> str:
+    """回测预测数据存储目录：全部固定收敛至 backtest/yuce"""
+    local_pred = os.path.join(SCRIPT_DIR, "yuce")
+    os.makedirs(local_pred, exist_ok=True)
+    return local_pred
 
 
 
@@ -155,9 +169,9 @@ def setup_logger(log_dir: str = None) -> logging.Logger:
         ch.setFormatter(formatter)
         logger.addHandler(ch)
 
-        # 日志仍写到 examples/backtest/，与回测图放在同一目录
+        # 日志写到 backtest/output/，与回测图放在同一目录
         if log_dir is None:
-            log_dir = os.path.join(EXAMPLES_DIR, "backtest")
+            log_dir = os.path.join(SCRIPT_DIR, "output")
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "kronos_backtest.log")
         fh = logging.FileHandler(log_file, encoding='utf-8', mode='a')
@@ -3057,9 +3071,9 @@ def streamlit_main():
     except Exception:
         pass
 
-    data_dir   = os.path.join(EXAMPLES_DIR, "data")
-    model_dir  = os.path.join(EXAMPLES_DIR, "yuce")
-    output_dir = os.path.join(EXAMPLES_DIR, "backtest")
+    data_dir   = resolve_data_dir()
+    model_dir  = resolve_pred_dir()
+    output_dir = os.path.join(SCRIPT_DIR, "output")
 
     st.title("📈 Kronos Pro — 工业级量化回测系统")
     st.caption(
@@ -3795,9 +3809,9 @@ def cli_main():
     print(f"  预测时界  : {'Auto (极值自适应)' if horizon_val == 'auto' else f'{horizon_val} 天'}")
     print()
 
-    data_dir    = os.path.join(EXAMPLES_DIR, "data")
-    pred_dir    = os.path.join(EXAMPLES_DIR, "yuce")
-    backtest_dir= os.path.join(EXAMPLES_DIR, "backtest")
+    data_dir    = resolve_data_dir()
+    pred_dir    = resolve_pred_dir()
+    backtest_dir= os.path.join(SCRIPT_DIR, "output")
 
     hist_df = None
     pred_df = None

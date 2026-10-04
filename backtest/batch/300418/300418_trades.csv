@@ -1,0 +1,3 @@
+﻿date,action,price,shares,commission,pnl_pct,reason,cash_balance,target_horizon,stop_pct
+2026-05-07,BUY,52.3923,127,5.0,0.0,信号开仓(目标H=7日),93341.17,7.0,0.0693
+2026-05-13,SELL,52.0679,127,8.31,-0.006193,模型波段走弱主动离场,99945.49,,

@@ -21,7 +21,7 @@ import streamlit as st
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
-# 看板读取的行情、预测和已有回测结果都还在 examples/
+# 回测体系根目录与数据目录配置
 EXAMPLES_DIR = os.path.join(PROJECT_ROOT, "examples")
 for p in [PROJECT_ROOT, CURRENT_DIR, EXAMPLES_DIR]:
     if p not in sys.path:
@@ -51,10 +51,23 @@ try:
 except ImportError:
     HAS_PLOTLY = False
 
-DATA_DIR = os.path.join(EXAMPLES_DIR, "data")
-PRED_DIR = os.path.join(EXAMPLES_DIR, "yuce")
-OUTPUT_DIR = os.path.join(EXAMPLES_DIR, "backtest")
-BATCH_OUTPUT_DIR = os.path.join(EXAMPLES_DIR, "backtest_batch")
+# 回测产物全部收敛于 backtest 目录下
+OUTPUT_DIR = os.path.join(CURRENT_DIR, "output")
+BATCH_OUTPUT_DIR = os.path.join(CURRENT_DIR, "batch")
+
+# 行情与预测数据：全部统一收敛于 backtest/data 与 backtest/yuce
+def resolve_data_dir() -> str:
+    local_data = os.path.join(CURRENT_DIR, "data")
+    os.makedirs(local_data, exist_ok=True)
+    return local_data
+
+def resolve_pred_dir() -> str:
+    local_pred = os.path.join(CURRENT_DIR, "yuce")
+    os.makedirs(local_pred, exist_ok=True)
+    return local_pred
+
+DATA_DIR = resolve_data_dir()
+PRED_DIR = resolve_pred_dir()
 
 # 预设股票池定义
 PRESET_POOLS = {
