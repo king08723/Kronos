@@ -45,9 +45,14 @@ def prepare_stock_data(csv_file_path, stock_code):
     print(f"正在加载和预处理股票 {stock_code} 数据...")
 
     # 读取CSV文件
+    # 【示例数据: 原始 df 结构】
+    #       日期    开盘价  最高价  最低价  收盘价      成交量         成交额
+    # 0 2024-01-02  35.20  36.50  34.80  36.10  1205000.0  4.312000e+07
+    # 1 2024-01-03  36.00  37.10  35.90  36.80  1350000.0  4.950000e+07
     df = pd.read_csv(csv_file_path, encoding='utf-8-sig')
 
     # 检查数据列名并重命名为标准格式
+    # 【标准映射字典】
     column_mapping = {
         '日期': 'timestamps',
         '开盘价': 'open',
@@ -71,9 +76,13 @@ def prepare_stock_data(csv_file_path, stock_code):
 
     df['timestamps'] = pd.to_datetime(df['timestamps'])
 
-    # 按时间排序
+    # 按时间排序（由旧到新升序排列）
     df = df.sort_values('timestamps').reset_index(drop=True)
 
+    # 【示例数据: 处理后的 df 结构，形状如 (242, 7)】
+    #   timestamps   open   high    low  close     volume        amount
+    # 0 2024-01-02  35.20  36.50  34.80  36.10  1205000.0  4.312000e+07
+    # 1 2024-01-03  36.00  37.10  35.90  36.80  1350000.0  4.950000e+07
     print(f"✅ 数据加载完成，共 {len(df)} 条记录")
     print(f"时间范围: {df['timestamps'].min()} 到 {df['timestamps'].max()}")
     print(f"数据列: {df.columns.tolist()}")
@@ -94,14 +103,21 @@ def calculate_prediction_parameters(df, target_days=100):
     pred_len: 预测期数
     """
     # 计算平均交易日数量（考虑节假日）
+    # 【示例】total_days = (2024-12-31 - 2024-01-02).days ≈ 364 天（自然日跨度）
     total_days = (df['timestamps'].max() - df['timestamps'].min()).days
+    # 【示例】trading_days = 242（A股实际开市交易的天数）
     trading_days = len(df)
+    # 【示例】trading_ratio = 242 / 364 ≈ 0.665（交易日/自然日比例，通常在 0.68 左右）
     trading_ratio = trading_days / total_days if total_days > 0 else 0.7  # 交易日比例
 
     # 计算目标预测的交易日数量
+    # 【示例】target_days=100 时，pred_trading_days = int(100 * 0.665) = 66 天
     pred_trading_days = int(target_days * trading_ratio)
 
     # 设置回看期数为预测期数的2-3倍，但不超过数据总量的70%
+    # 【示例】max_lookback = int(242 * 0.7) = 169
+    # 【示例】lookback = min(66 * 2, 169, 242 - 66) = min(132, 169, 176) = 132（回看历史 132 个交易日）
+    # 【示例】pred_len = min(66, 242 - 132) = 66（预测未来 66 个交易日）
     max_lookback = int(len(df) * 0.7)
     lookback = min(pred_trading_days * 2, max_lookback, len(df) - pred_trading_days)
     pred_len = min(pred_trading_days, len(df) - lookback)
@@ -127,6 +143,7 @@ def generate_future_dates_with_holidays(last_date, pred_len):
     future_dates: 未来的交易日日期列表
     """
     # 中国主要节假日（需要根据实际情况调整）
+    # 【示例数据: 过滤名单】包含需要排除的法定休市日期
     holidays_2025 = [
         # 2025年国庆节假期（通常为10月1日-10月8日）
         datetime(2025, 10, 1), datetime(2025, 10, 2), datetime(2025, 10, 3),
@@ -139,11 +156,13 @@ def generate_future_dates_with_holidays(last_date, pred_len):
     current_date = last_date + timedelta(days=1)
 
     while len(future_dates) < pred_len:
-        # 如果是工作日（周一到周五）且不是节假日
+        # 如果是工作日（周一到周五 weekday()<5）且不是节假日
         if current_date.weekday() < 5 and current_date not in holidays_2025:
             future_dates.append(current_date)
         current_date += timedelta(days=1)
 
+    # 【示例数据: future_dates 列表，长度为 pred_len (如 66)】
+    # [Timestamp('2025-01-02'), Timestamp('2025-01-03'), Timestamp('2025-01-06'), ...]
     print(f"📅 生成的未来交易日: 共 {len(future_dates)} 天")
     print(f"   起始日期: {future_dates[0].strftime('%Y-%m-%d')}")
     print(f"   结束日期: {future_dates[-1].strftime('%Y-%m-%d')}")
@@ -172,6 +191,8 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     pred_df.index = future_dates
 
     # 准备价格数据
+    # 【示例】sr_close: 历史收盘价序列 (Series，索引为 timestamps, 值为 float)
+    # 【示例】sr_pred_close: 预测收盘价序列 (Series，索引为 future_dates, 值为 float)
     sr_close = kline_df.set_index('timestamps')['close']
     sr_pred_close = pred_df['close']
     sr_close.name = '历史数据'
@@ -184,6 +205,7 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     sr_pred_volume.name = "预测数据"
 
     # 合并数据
+    # 【示例】close_df 包含两列 ['历史数据', '预测数据']，形状为 (lookback + pred_len, 2)
     close_df = pd.concat([sr_close, sr_pred_close], axis=1)
     volume_df = pd.concat([sr_volume, sr_pred_volume], axis=1)
 
@@ -193,16 +215,19 @@ def plot_prediction_with_details(kline_df, pred_df, future_dates, stock_code="00
     pred_volumes = volume_df['预测数据'].dropna()
 
     # 准备完整的OHLCV数据集（按时间排序），用于鼠标点击时精确定位与数据提取
+    # 【示例】hist_records 结构: 历史 K 线的完整 OHLCV 记录
     hist_records = kline_df.copy()
     hist_records['timestamps'] = pd.to_datetime(hist_records['timestamps'])
     hist_records = hist_records.set_index('timestamps')
     hist_records['data_type'] = '历史'
 
+    # 【示例】pred_records 结构: 预测未来的 OHLCV 及置信区间记录
     pred_records = pred_df.copy()
     pred_records.index = pd.to_datetime(pred_records.index)
     pred_records['data_type'] = '预测'
 
     # 汇总完整OHLCV记录并去重
+    # 【示例】combined_ohlcv: 包含历史+预测所有交易日的完整行情总表，形状如 (132 + 66, 10)
     combined_ohlcv = pd.concat([hist_records, pred_records]).sort_index()
     combined_ohlcv = combined_ohlcv[~combined_ohlcv.index.duplicated(keep='last')]
     all_dates = combined_ohlcv.index
@@ -784,10 +809,21 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         # 5. 准备输入数据
         print("步骤5: 准备输入数据...")
         # 使用最新的数据作为输入
+        # 【示例数据: x_df 为纯 OHLCV 数值矩阵，形状如 (lookback=132, 6)】
+        #       open   high    low  close     volume        amount
+        # 0    34.20  34.80  33.90  34.50  1500000.0  5.175000e+07
+        # ...
+        # 131  38.10  39.50  37.80  39.20  2100000.0  8.190000e+07
         x_df = df.iloc[-lookback:][['open', 'high', 'low', 'close', 'volume', 'amount']].reset_index(drop=True)
+        # 【示例数据: x_timestamp 为历史对应时间戳序列，形状如 (132,)】
+        # 0      2024-06-20
+        # ...
+        # 131    2024-12-31
         x_timestamp = df.iloc[-lookback:]['timestamps'].reset_index(drop=True)
 
         # 生成未来日期（考虑节假日）
+        # 【示例数据: future_dates 为未来预测交易日列表，长度如 pred_len=66】
+        # [Timestamp('2025-01-02'), Timestamp('2025-01-03'), ..., Timestamp('2025-04-10')]
         last_historical_date = df['timestamps'].iloc[-1]
         future_dates = generate_future_dates_with_holidays(last_historical_date, pred_len)
 
@@ -798,18 +834,28 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         # 6. 执行预测（支持蒙特卡洛多路径集成与扇形置信区间）
         if sample_count > 1:
             print(f"步骤6: 执行蒙特卡洛多路径集成预测 (采样路径数: {sample_count})...")
+            # 【示例数据: sample_paths 是长度为 sample_count(如 5) 的列表】
+            # 每个元素是一个独立预测的 DataFrame，形状为 (pred_len=66, 6)，代表一种可能的未来平行走势
             sample_paths = predictor.predict_batch(
                 df_list=[x_df] * sample_count,
                 x_timestamp_list=[x_timestamp] * sample_count,
                 y_timestamp_list=[pd.Series(future_dates)] * sample_count,
                 pred_len=pred_len,
-                T=1.0,
-                top_p=0.9,
+                T=1.0,         # 采样温度：控制波动性大小 (T=1.0 为自然波动，T<1 保守，T>1 激进)
+                top_p=0.9,     # 核采样截断阈值：过滤掉累计概率超过 90% 的低概率尾部极端异常 Token
                 sample_count=1,
                 verbose=True
             )
 
             # 聚合各采样轨迹矩阵
+            # 【示例数据: close_matrix 堆叠矩阵，形状为 (sample_count, pred_len)，如 (5, 66)】
+            # 每行是一条独立采样路径在未来 66 天的收盘价数值
+            # [
+            #   [39.5, 40.1, 39.8, ..., 45.2],  <- 路径 1 (中度看涨)
+            #   [39.1, 38.6, 38.2, ..., 41.0],  <- 路径 2 (震荡回调)
+            #   ...
+            #   [39.8, 41.2, 42.5, ..., 48.0],  <- 路径 5 (强力突破)
+            # ]
             close_matrix = np.stack([p['close'].values for p in sample_paths], axis=0)
             vol_matrix = np.stack([p['volume'].values for p in sample_paths], axis=0)
             open_matrix = np.stack([p['open'].values for p in sample_paths], axis=0)
@@ -817,9 +863,14 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
             low_matrix = np.stack([p['low'].values for p in sample_paths], axis=0)
             amt_matrix = np.stack([p['amount'].values for p in sample_paths], axis=0)
 
+            # 【示例数据: 置信区间分位数，形状均为 (pred_len=66,)】
+            # c_upper: 90% 分位数（未来每一步的乐观走势上限），如 [39.7, 41.0, ..., 47.5]
+            # c_lower: 10% 分位数（未来每一步的悲观走势下限），如 [38.9, 38.2, ..., 40.5]
             c_upper = np.percentile(close_matrix, 90, axis=0) if sample_count >= 5 else np.max(close_matrix, axis=0)
             c_lower = np.percentile(close_matrix, 10, axis=0) if sample_count >= 5 else np.min(close_matrix, axis=0)
 
+            # 【示例数据: 最终预测汇总表 pred_df，形状为 (66, 9)】
+            # 包含开高低收均值、成交量/额均值、置信上下限及标准差，索引为 future_dates
             pred_df = pd.DataFrame({
                 'open': np.mean(open_matrix, axis=0),
                 'high': np.mean(high_matrix, axis=0),

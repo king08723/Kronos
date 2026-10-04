@@ -14,12 +14,13 @@ from typing import Dict, List, Tuple, Optional
 
 warnings.filterwarnings('ignore')
 
-# 添加项目路径以便导入自定义模块
-sys.path.append("../")
+# 添加项目路径以便导入自定义模块 (基于当前脚本目录解析上级根目录)
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.abspath(os.path.join(CURRENT_DIR, "..")))
 try:
     from model import Kronos, KronosTokenizer, KronosPredictor
-except ImportError:
-    print("⚠️ 无法导入Kronos模型，预测功能将不可用")
+except ImportError as e:
+    print(f"⚠️ 无法导入Kronos模型: {e}，预测功能将不可用")
 
 # 设置中文字体 (兼容 macOS / Windows / Linux)
 plt.rcParams['font.sans-serif'] = [

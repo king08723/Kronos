@@ -16,25 +16,62 @@ plt.rcParams['axes.unicode_minus'] = False
 class KronosBacktester:
     """
     Kronos模型回测类
+    
+    【核心数据流概览】
+    1. 历史行情 (hist_df: DataFrame) ──┐
+                                     ├──> 对齐与信号生成 (combined_df: DataFrame) ──> 回测模拟 (run_backtest) ──> 指标归因 (metrics: dict)
+    2. 模型预测 (pred_df: DataFrame) ──┘
     """
 
-    def __init__(self, data_dir, model_dir, initial_capital=100000):
+    def __init__(self, data_dir: str, model_dir: str, initial_capital: float = 100000.0):
         """
         初始化回测器
 
-        参数:
-        data_dir: 数据目录
-        model_dir: 模型预测结果目录
-        initial_capital: 初始资金
+        参数与示例:
+        --------------------------------------------------
+        data_dir: str
+            历史行情数据所在目录路径
+            示例值: "/Users/jyy/Documents/github_projects/Kronos/examples/data"
+        model_dir: str
+            模型预测结果所在目录路径
+            示例值: "/Users/jyy/Documents/github_projects/Kronos/examples/yuce"
+        initial_capital: float, 默认 100000.0 (十万元)
+            初始账户可用资金
+            示例值: 100000.0
         """
         self.data_dir = data_dir
         self.model_dir = model_dir
         self.initial_capital = initial_capital
+        # 缓存回测结果字典，结构示例: {"300418": {"metrics": {...}, "trades": [...]}}
         self.results = {}
 
-    def load_historical_data(self, stock_code):
+    def load_historical_data(self, stock_code: str) -> pd.DataFrame:
         """
-        加载历史数据
+        加载并标准化历史日K线行情数据
+
+        参数:
+            stock_code (str): 股票代码，示例: "300418" 或 "03750"
+
+        返回:
+            pd.DataFrame: 以日期为索引的历史行情表格。
+            -----------------------------------------------------------------------------------------
+            【返回数据结构与示例数据】:
+            索引类型: pd.DatetimeIndex (名称: 'date')
+            列结构:
+                open   (float64): 开盘价 (元)
+                high   (float64): 最高价 (元)
+                low    (float64): 最低价 (元)
+                close  (float64): 收盘价 (元)
+                volume (float64): 成交量 (股)
+                amount (float64): 成交金额 (元)
+
+            示例 DataFrame 打印样式:
+                                open   high    low  close       volume        amount
+            date
+            2025-09-19 00:00:00 41.50  45.50  41.32  43.45  139928000.0  6.079872e+09
+            2025-09-22 00:00:00 43.00  43.38  42.00  42.65   84946700.0  3.622977e+09
+            2026-09-18 00:00:00 44.80  45.90  44.50  45.33   62100000.0  2.812000e+09
+            -----------------------------------------------------------------------------------------
         """
         # 兼容多种历史数据文件命名
         possible_files = [
@@ -80,9 +117,30 @@ class KronosBacktester:
 
         return df
 
-    def load_predictions(self, stock_code):
+    def load_predictions(self, stock_code: str) -> pd.DataFrame:
         """
-        加载模型预测结果
+        加载模型前瞻预测数据
+
+        参数:
+            stock_code (str): 股票代码，示例: "300418"
+
+        返回:
+            pd.DataFrame: 以日期为索引的未来时段预测序列。
+            -----------------------------------------------------------------------------------------
+            【返回数据结构与示例数据】:
+            索引类型: pd.DatetimeIndex (名称: 'date')
+            列结构:
+                predicted_close  (float64): 模型预测的收盘价 (元)
+                predicted_volume (float64): 模型预测的成交量 (股，可选)
+
+            示例 DataFrame 打印样式:
+                                 predicted_close  predicted_volume
+            date
+            2026-09-21 00:00:00        44.214916      5.795489e+07
+            2026-09-22 00:00:00        44.221474      4.851408e+07
+            2026-09-23 00:00:00        45.326720      5.811489e+07
+            2026-09-24 00:00:00        44.732090      6.184539e+07
+            -----------------------------------------------------------------------------------------
         """
         # 尝试不同的预测文件命名
         pred_files = [
@@ -127,11 +185,24 @@ class KronosBacktester:
 
         return pred_df
 
-    def align_data(self, hist_df, pred_df):
+    def align_data(self, hist_df: pd.DataFrame, pred_df: pd.DataFrame) -> pd.DataFrame:
         """
-        对齐历史数据和预测数据的时间范围
+        对齐历史数据和预测数据的时间范围，确保回测仅在模型预测的“未来时区”生效
+
+        参数:
+            hist_df: 历史数据表 (DataFrame)
+            pred_df: 预测数据表 (DataFrame)
+
+        返回:
+            pred_df_aligned (pd.DataFrame): 过滤后的预测数据。
+            -----------------------------------------------------------------------------------------
+            【示例对比】:
+            输入历史范围: 2025-09-19 至 2026-09-18 (最后历史日期: 2026-09-18)
+            原始预测范围: 2026-09-21 至 2026-12-29
+            输出对齐范围: 2026-09-21 至 2026-12-29 (pred_df.index > 2026-09-18)
+            -----------------------------------------------------------------------------------------
         """
-        # 找到历史数据的最后日期
+        # 找到历史数据的最后日期 (示例: Timestamp('2026-09-18 00:00:00'))
         last_hist_date = hist_df.index.max()
 
         # 筛选预测数据，从历史数据结束后开始
@@ -146,42 +217,113 @@ class KronosBacktester:
 
         return pred_df_aligned
 
-    def calculate_trading_signals(self, hist_df, pred_df, threshold=0.02):
+    def calculate_trading_signals(self, hist_df: pd.DataFrame, pred_df: pd.DataFrame, threshold: float = 0.02) -> pd.DataFrame:
         """
-        计算交易信号
+        基于预测收益率计算多空/持仓交易信号
+
+        参数:
+            hist_df (pd.DataFrame): 历史数据
+            pred_df (pd.DataFrame): 预测数据
+            threshold (float): 触发交易的预期涨跌幅阈值，默认 0.02 (即 2%)
+                               例如: 预测收益率 > +2% 产生买入信号(+1)，< -2% 产生卖出信号(-1)
+
+        返回:
+            pd.DataFrame: 合并并带有交易信号的数据表 (combined_df)
+            -----------------------------------------------------------------------------------------
+            【返回数据结构与示例数据】:
+            索引: pd.DatetimeIndex ('date')
+            字段结构:
+                actual      (float64): 历史真实收盘价 (未来时段为 NaN)
+                predicted   (float64): 模型预测收盘价 (历史时段为 NaN)
+                pred_return (float64): 预测收益率 = predicted[t] / predicted[t-1] - 1
+                signal      (int64):   瞬时触发脉冲 (1: 买入, -1: 卖出, 0: 无动作)
+                position    (float64): 目标持仓状态 (1.0: 多头持仓, -1.0: 空头持仓, 0.0: 空仓观望)
+
+            示例表格展示:
+                                actual  predicted  pred_return  signal  position
+            date
+            2026-09-18 00:00:00  45.33        NaN          NaN       0       0.0  <- 历史最后一天
+            2026-09-21 00:00:00    NaN      44.21          NaN       0       0.0  <- 预测第1天(无前值)
+            2026-09-22 00:00:00    NaN      44.22     0.000227       0       0.0  <- 波动 < 2%，维持空仓
+            2026-09-23 00:00:00    NaN      45.33     0.025100       1       1.0  <- 涨幅 +2.51% > 2%，买入！
+            2026-09-24 00:00:00    NaN      44.73    -0.013238       0       1.0  <- 跌幅 1.32% < 2%，维持持仓
+            -----------------------------------------------------------------------------------------
         """
         # 对齐数据
         pred_df = self.align_data(hist_df, pred_df)
 
         # 合并历史数据和预测数据
+        # 示例: combined 包含了历史 actual (如 45.33) 与未来 predicted (如 44.21, 45.33...)
         combined = pd.concat([
             hist_df[['close']].rename(columns={'close': 'actual'}),
             pred_df[['predicted_close']].rename(columns={'predicted_close': 'predicted'})
         ], axis=1)
 
-        # 计算预测收益率
+        # 计算预测收益率 (例: 45.33 / 44.22 - 1 = +0.0251)
         combined['pred_return'] = combined['predicted'].pct_change()
 
-        # 生成交易信号
+        # 生成交易信号 (脉冲触发)
+        # 阈值判断示例: pred_return = 0.0251 > 0.02 -> 产生 signal = 1
         combined['signal'] = 0
-        combined['signal'] = np.where(combined['pred_return'] > threshold, 1,  # 买入信号
-                                      np.where(combined['pred_return'] < -threshold, -1, 0))  # 卖出信号
+        combined['signal'] = np.where(combined['pred_return'] > threshold, 1,  # 买入信号 (+1)
+                                      np.where(combined['pred_return'] < -threshold, -1, 0))  # 卖出信号 (-1)
 
-        # 过滤信号：避免频繁交易（信号前向填充维持仓位）
+        # 过滤信号：避免频繁交易（使用前向填充 ffill 维持持仓仓位状态）
+        # 示例: [0, 0, 1, 0, 0] -> replace(0, nan) -> [nan, nan, 1, nan, nan] -> ffill() -> [nan, nan, 1, 1, 1] -> fillna(0) -> [0, 0, 1, 1, 1]
         combined['position'] = combined['signal'].replace(0, np.nan).ffill().fillna(0)
 
         return combined
 
-    def run_backtest(self, combined_df):
+    def run_backtest(self, combined_df: pd.DataFrame) -> tuple:
         """
-        运行回测
+        按时间序列逐步遍历并模拟交易撮合
+
+        参数:
+            combined_df (pd.DataFrame): 包含价格与持仓信号的合并数据表 (由 calculate_trading_signals 生成)
+
+        返回:
+            tuple: (backtest_results, trades)
+            -----------------------------------------------------------------------------------------
+            【返回值 1: backtest_results (pd.DataFrame) 账户日度时序记录】
+            索引: pd.DatetimeIndex ('date')
+            列结构:
+                capital   (float64): 当日收盘账户资产总净值 (现金 + 持仓市值，单位: 元)
+                position  (float64): 当日收盘持股数量 (正数代表多头，0 代表空仓，单位: 股)
+                returns   (float64): 账户资产日收益率 (当天资产净值 / 前一天资产净值 - 1)
+                price     (float64): 当日计算估值采用的标的基准价格 (元)
+
+            示例 DataFrame 打印样式:
+                                     capital  position   returns      price
+            date
+            2026-09-18 00:00:00  100000.0000       0.0  0.000000  45.330000  <- 初始状态
+            2026-09-21 00:00:00  100000.0000       0.0  0.000000  44.214916  <- 观望维持
+            2026-09-22 00:00:00  100000.0000       0.0  0.000000  44.221474  <- 观望维持
+            2026-09-23 00:00:00  100000.0700    2206.0  0.000001  45.326720  <- 触发买入2206股
+            2026-09-24 00:00:00   98679.0600    2206.0 -0.013210  44.732090  <- 持仓浮动净值随价格变动
+
+            -----------------------------------------------------------------------------------------
+            【返回值 2: trades (List[Dict[str, Any]]) 交易明细记录清单】
+            结构示例:
+            [
+                {
+                    'date': Timestamp('2026-09-23 00:00:00'),  # 成交日期
+                    'action': 'BUY',                            # 动作: 'BUY' (买入建仓) 或 'SELL' (卖出平仓)
+                    'price': 45.32672,                          # 成交价格 (元)
+                    'shares': 2206.0,                           # 成交股数 (正数)
+                    'capital': 0.0700                           # 交易执行后剩余的现金余额 (元)
+                }
+            ]
+            -----------------------------------------------------------------------------------------
         """
         # 初始化资金和持仓
+        # capital (float): 可用现金余额，初始值示例 100000.0
         capital = self.initial_capital
+        # position (float): 当前持股数量，初始值 0.0
         position = 0
+        # trades (list): 交易历史流水账本列表
         trades = []
 
-        # 回测记录
+        # 回测记录表格构建
         backtest_results = pd.DataFrame(index=combined_df.index)
         backtest_results['capital'] = capital
         backtest_results['position'] = 0
@@ -189,20 +331,21 @@ class KronosBacktester:
         backtest_results['price'] = combined_df['actual'].combine_first(combined_df['predicted'])
 
         for i, (date, row) in enumerate(combined_df.iterrows()):
+            # current_price (float): 当前交易日参考价格，示例 45.33
             current_price = row['actual'] if not pd.isna(row['actual']) else row['predicted']
+            # signal (float): 当日持仓目标，1.0(持有多仓), -1.0(持有空仓), 0.0(空仓)
             signal = row['position']
 
             # 跳过无效价格
             if pd.isna(current_price):
                 continue
 
-            # 执行交易
+            # 执行交易模拟（T+0/T+1 简化模型，按当日信号在当前价格全仓调仓）
             if i > 0:  # 从第二天开始
                 prev_position = backtest_results['position'].iloc[i - 1] if i > 0 else 0
 
-                # 平仓信号
+                # 平仓信号: 上一日有持仓，而今日目标持仓为 0
                 if prev_position != 0 and signal == 0:
-                    # 平仓
                     capital = position * current_price
                     position = 0
                     trades.append({
@@ -213,9 +356,9 @@ class KronosBacktester:
                         'capital': capital
                     })
 
-                # 开仓信号
+                # 开仓信号: 上一日无持仓，而今日目标持仓非 0 (如 signal == 1)
                 elif prev_position == 0 and signal != 0:
-                    # 计算可买股数（假设全仓交易）
+                    # 计算可买股数（假设全仓满仓买入）
                     shares = int(capital / current_price)
                     if shares > 0:
                         position = shares * signal
@@ -228,15 +371,15 @@ class KronosBacktester:
                             'capital': capital
                         })
 
-            # 更新持仓市值
+            # 更新当日持仓总市值 (portfolio_value: float = 现金 + 持仓股数 * 收盘价)
             portfolio_value = capital + position * current_price
 
-            # 记录结果
+            # 记录当日结果
             backtest_results.loc[date, 'capital'] = portfolio_value
             backtest_results.loc[date, 'position'] = position
             backtest_results.loc[date, 'price'] = current_price
 
-            # 计算日收益率
+            # 计算日收益率 returns = (V_t - V_{t-1}) / V_{t-1}
             if i > 0:
                 prev_value = backtest_results['capital'].iloc[i - 1]
                 if prev_value > 0:
@@ -244,42 +387,68 @@ class KronosBacktester:
 
         return backtest_results, trades
 
-    def calculate_metrics(self, backtest_results, trades):
+    def calculate_metrics(self, backtest_results: pd.DataFrame, trades: list) -> dict:
         """
-        计算回测指标
+        计算量化回测核心绩效与风险归因指标
+
+        参数:
+            backtest_results (pd.DataFrame): run_backtest 返回的每日净值与持仓表
+            trades (list): 交易历史流水账列表
+
+        返回:
+            dict: 包含各项量化指标的字典。
+            -----------------------------------------------------------------------------------------
+            【返回数据结构与示例数据】:
+            {
+                '总收益率': -0.0581,         # float: (期末资产 - 初始资金) / 初始资金, 如 -5.81%
+                '年化收益率': -0.0478,       # float: 复利年化收益率 (基于 252 交易日换算), 如 -4.78%
+                '波动率': 0.1207,           # float: 收益率标准差 * sqrt(252), 年化波动率 12.07%
+                '夏普比率': -0.6446,         # float: (年化收益率 - 无风险利率3%) / 波动率
+                '最大回撤': -0.1824,         # float: 历史资产高点到低点的最大跌幅比例, 如 -18.24%
+                '胜率': 0.60,               # float: 盈利交易次数 / 总完成对冲交易次数, 如 60.0%
+                '平均交易收益': 0.015,       # float: 每笔已平仓交易的平均收益率, 如 1.50%
+                '交易次数': 1,               # int: 累计产生的交易委托动作数 (买入+卖出)
+                '最终资金': 94187.91        # float: 回测截止时账户资产最终净值 (元)
+            }
+            -----------------------------------------------------------------------------------------
         """
         returns = backtest_results['returns'].replace([np.inf, -np.inf], np.nan).dropna()
 
         if len(returns) == 0:
             return {
-                '总收益率': 0,
-                '年化收益率': 0,
-                '波动率': 0,
-                '夏普比率': 0,
-                '最大回撤': 0,
-                '胜率': 0,
-                '平均交易收益': 0,
+                '总收益率': 0.0,
+                '年化收益率': 0.0,
+                '波动率': 0.0,
+                '夏普比率': 0.0,
+                '最大回撤': 0.0,
+                '胜率': 0.0,
+                '平均交易收益': 0.0,
                 '交易次数': 0,
                 '最终资金': self.initial_capital
             }
 
+        # 1. 累计总收益率 (Total Return)
         total_return = (backtest_results['capital'].iloc[-1] - self.initial_capital) / self.initial_capital
+        # 2. 年化收益率 (Annualized Return, 按一年252个交易日复利推算)
         annual_return = (1 + total_return) ** (252 / len(returns)) - 1
 
-        # 波动率
+        # 3. 年化波动率 (Volatility)
         volatility = returns.std() * np.sqrt(252)
 
-        # 夏普比率（假设无风险利率为3%）
+        # 4. 夏普比率 (Sharpe Ratio, 假设中国国债无风险利率为 3%)
         risk_free_rate = 0.03
         sharpe_ratio = (annual_return - risk_free_rate) / volatility if volatility > 0 else 0
 
-        # 最大回撤
+        # 5. 最大回撤 (Maximum Drawdown)
+        # cumulative_returns (Series): 资产累计净值曲线 (以1.0为起点)
         cumulative_returns = (1 + returns).cumprod()
+        # peak (Series): 历史最高水位线
         peak = cumulative_returns.expanding().max()
+        # drawdown (Series): 当前相对最高点的回撤比率序列
         drawdown = (cumulative_returns - peak) / peak
         max_drawdown = drawdown.min()
 
-        # 交易统计
+        # 6. 交易统计 (按买入-卖出配对计算单笔盈亏)
         trade_returns = []
         buy_trades = [t for t in trades if t['action'] == 'BUY']
         sell_trades = [t for t in trades if t['action'] == 'SELL']
@@ -290,8 +459,8 @@ class KronosBacktester:
             trade_return = (sell['price'] - buy['price']) / buy['price']
             trade_returns.append(trade_return)
 
-        win_rate = len([r for r in trade_returns if r > 0]) / len(trade_returns) if trade_returns else 0
-        avg_trade_return = np.mean(trade_returns) if trade_returns else 0
+        win_rate = len([r for r in trade_returns if r > 0]) / len(trade_returns) if trade_returns else 0.0
+        avg_trade_return = float(np.mean(trade_returns)) if trade_returns else 0.0
 
         metrics = {
             '总收益率': total_return,
@@ -307,9 +476,19 @@ class KronosBacktester:
 
         return metrics
 
-    def plot_backtest_results(self, backtest_results, metrics, stock_code, output_dir, show_plot=True):
+    def plot_backtest_results(self, backtest_results: pd.DataFrame, metrics: dict, stock_code: str, output_dir: str, show_plot: bool = True):
         """
-        绘制回测结果图表
+        绘制回测三联图（资金净值曲线、累计收益 vs 基准、动态回撤区间）
+
+        参数:
+            backtest_results (pd.DataFrame): 包含 capital, returns, price 等字段
+            metrics (dict): calculate_metrics 返回的指标字典
+            stock_code (str): 标的代码，示例 "300418"
+            output_dir (str): 图表输出保存目录，示例 "./examples/backtest"
+            show_plot (bool): 是否调用 plt.show() 弹窗显示，GUI/Streamlit下通常设为 False
+
+        返回:
+            matplotlib.figure.Figure: 生成的画布对象
         """
         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(15, 12))
 
@@ -348,7 +527,7 @@ class KronosBacktester:
         ax3.legend()
         ax3.grid(True, alpha=0.3)
 
-        # 添加指标文本
+        # 添加指标文本卡片
         metrics_text = (
             f"总收益率: {metrics['总收益率']:.2%}\n"
             f"年化收益率: {metrics['年化收益率']:.2%}\n"
@@ -365,7 +544,7 @@ class KronosBacktester:
 
         plt.tight_layout()
 
-        # 保存图表
+        # 保存图表至指定目录
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
             chart_file = os.path.join(output_dir, f'{stock_code}_backtest_results.png')
@@ -377,9 +556,22 @@ class KronosBacktester:
 
         return fig
 
-    def run_complete_backtest(self, stock_code, output_dir, threshold=0.02, show_plot=False):
+    def run_complete_backtest(self, stock_code: str, output_dir: str, threshold: float = 0.02, show_plot: bool = False):
         """
-        运行完整的回测流程
+        全流程一键回测管线：加载行情与预测 -> 信号生成 -> 模拟撮合 -> 指标计算 -> 图表渲染
+
+        参数与示例:
+            stock_code (str): 标的代码，示例: "300418"
+            output_dir (str): 图表输出路径，示例: "./examples/backtest"
+            threshold (float): 交易信号灵敏度阈值，示例: 0.02 (即 2%)
+            show_plot (bool): 是否弹窗展示图表，默认 False
+
+        返回:
+            tuple: (metrics, backtest_results, trades, fig)
+                metrics: dict, 量化指标字典
+                backtest_results: pd.DataFrame, 每日资金与持仓变化表
+                trades: list, 交易行为列表
+                fig: matplotlib.figure.Figure, 渲染的图表对象
         """
         print(f"🎯 开始 {stock_code} 回测分析")
         print("=" * 50)
@@ -433,9 +625,20 @@ class KronosBacktester:
             return None, None, None, None
 
 
-def get_available_stocks(data_dir, model_dir):
+def get_available_stocks(data_dir: str, model_dir: str) -> list:
     """
-    扫描数据目录与预测目录，提取可用的股票代码列表
+    扫描历史数据目录与模型预测目录，提取同时或任一存在的可用股票代码集合
+
+    参数:
+        data_dir (str): 历史数据目录，示例: "./examples/data"
+        model_dir (str): 预测数据目录，示例: "./examples/yuce"
+
+    返回:
+        list: 排好序的标的代码列表。
+        -----------------------------------------------------------------------------------------
+        【返回数据示例】:
+        ['300418', '600519', '000001']
+        -----------------------------------------------------------------------------------------
     """
     stocks = set()
     if os.path.exists(data_dir):
@@ -457,6 +660,33 @@ def get_available_stocks(data_dir, model_dir):
 def streamlit_main():
     """
     Streamlit Web 交互看板入口
+    
+    【核心会话状态 st.session_state["backtest_data"] 数据结构示例】:
+    {
+        "stock_code": "300418",                 # str: 当前回测股票代码
+        "initial_capital": 100000.0,            # float: 初始本金 (元)
+        "metrics": {                            # dict: 量化评价指标字典
+            "总收益率": -0.0581,
+            "年化收益率": -0.0478,
+            "夏普比率": -0.64,
+            "最大回撤": -0.1824,
+            "胜率": 0.0,
+            "平均交易收益": 0.0,
+            "交易次数": 1,
+            "最终资金": 94187.91
+        },
+        "backtest_results": pd.DataFrame,       # DataFrame: 包含 capital, position, returns, price
+        "trades": [                             # list: 交易记录列表
+            {
+                'date': Timestamp('2026-09-23 00:00:00'),
+                'action': 'BUY',
+                'price': 45.33,
+                'shares': 2206.0,
+                'capital': 0.07
+            }
+        ],
+        "fig": matplotlib.figure.Figure         # Figure: 资金/收益/回撤三合一图表
+    }
     """
     import streamlit as st
 
@@ -507,6 +737,7 @@ def streamlit_main():
             step=0.5,
             help="当模型预测的预期涨跌幅超过该阈值时触发买入或卖出信号"
         )
+        # threshold (float): 交易信号阈值，示例 0.02
         threshold = threshold_pct / 100.0
 
         run_btn = st.button("🚀 运行回测分析", type="primary")
@@ -625,13 +856,27 @@ def streamlit_main():
 
 def cli_main():
     """
-    终端命令行入口（兼容 python run_backtest_kronos.py [stock_code]）
+    终端命令行入口
+    
+    运行示例:
+        python examples/run_backtest_kronos.py 300418
     """
     import sys
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+    # target_stock (str): 目标标的代码，默认 "300418"
     target_stock = sys.argv[1] if len(sys.argv) > 1 else "300418"
 
+    # BACKTEST_CONFIG (dict): 回测全局执行配置项
+    # 示例结构:
+    # {
+    #     "stock_code": "300418",
+    #     "data_dir": "/Users/.../examples/data",
+    #     "model_dir": "/Users/.../examples/yuce",
+    #     "output_dir": "/Users/.../examples/backtest",
+    #     "initial_capital": 100000.0,
+    #     "threshold": 0.02
+    # }
     BACKTEST_CONFIG = {
         "stock_code": target_stock,
         "data_dir": os.path.join(CURRENT_DIR, "data"),
@@ -658,12 +903,12 @@ def cli_main():
         stock_code=BACKTEST_CONFIG["stock_code"],
         output_dir=BACKTEST_CONFIG["output_dir"],
         threshold=BACKTEST_CONFIG["threshold"],
-        show_plot=True
+        show_plot=False
     )
 
     if metrics:
         print(f"\n✅ {BACKTEST_CONFIG['stock_code']} 回测完成!")
-        print(f"📁 结果保存在: {BACKTEST_CONFIG['output_dir']}")
+        print(f"📁 图表与结果保存在: {BACKTEST_CONFIG['output_dir']}")
 
 
 def main():

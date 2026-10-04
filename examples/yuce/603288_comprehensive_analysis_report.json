@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-17 19:35:52",
+  "timestamp": "2026-09-21 15:28:27",
   "stock_code": "603288",
   "market_analysis": {
     "overall_is_main_uptrend": false,
@@ -8,15 +8,15 @@
       "上证指数": {
         "is_main_uptrend": false,
         "trend_strength": 0,
-        "current_close": 3875.6044,
-        "price_change_pct": -0.4110416780961931,
+        "current_close": 3911.8714,
+        "price_change_pct": 0.9357766236409428,
         "market_status": "震荡调整"
       },
       "深证成指": {
         "is_main_uptrend": false,
         "trend_strength": 0,
-        "current_close": 13409.9079,
-        "price_change_pct": -0.33323118100662635,
+        "current_close": 13640.8728,
+        "price_change_pct": 1.7223451624153139,
         "market_status": "震荡调整"
       }
     },
