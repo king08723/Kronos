@@ -88,22 +88,36 @@ class DataFetcher:
         profile = MarketProfile.for_stock(stock_code, market=market)
         clean_code, det_market, prefix = SymbolResolver.resolve(stock_code, market=profile.market)
 
+        # 候选查找目录：支持当前传入目录与解耦目录 (historical_data / data) 双向兼容
+        search_dirs = [data_dir]
+        base_name = os.path.basename(os.path.normpath(data_dir))
+        parent_dir = os.path.dirname(os.path.normpath(data_dir))
+        if base_name == 'data':
+            alt_dir = os.path.join(parent_dir, 'historical_data')
+            if os.path.exists(alt_dir) and alt_dir not in search_dirs:
+                search_dirs.insert(0, alt_dir)  # 优先使用解耦后的 historical_data
+        elif base_name == 'historical_data':
+            alt_dir = os.path.join(parent_dir, 'data')
+            if os.path.exists(alt_dir) and alt_dir not in search_dirs:
+                search_dirs.append(alt_dir)
+
         # 候选文件查找
         hist_candidates = []
-        if tf.is_intraday:
-            hist_candidates.extend([
-                os.path.join(data_dir, f"{prefix}_{tf.value}.csv"),
-                os.path.join(data_dir, f"{clean_code}_{tf.value}.csv"),
-                os.path.join(data_dir, f"{prefix}_stock_data_{tf.value}.csv"),
-                os.path.join(data_dir, f"{clean_code}_stock_data_{tf.value}.csv"),
-            ])
+        for sdir in search_dirs:
+            if tf.is_intraday:
+                hist_candidates.extend([
+                    os.path.join(sdir, f"{prefix}_{tf.value}.csv"),
+                    os.path.join(sdir, f"{clean_code}_{tf.value}.csv"),
+                    os.path.join(sdir, f"{prefix}_stock_data_{tf.value}.csv"),
+                    os.path.join(sdir, f"{clean_code}_stock_data_{tf.value}.csv"),
+                ])
 
-        hist_candidates.extend([
-            os.path.join(data_dir, f"{prefix}_stock_data.csv"),
-            os.path.join(data_dir, f"{clean_code}_stock_data.csv"),
-            os.path.join(data_dir, f"{clean_code}_all_history.csv"),
-            os.path.join(data_dir, f"{clean_code}.csv"),
-        ])
+            hist_candidates.extend([
+                os.path.join(sdir, f"{prefix}_stock_data.csv"),
+                os.path.join(sdir, f"{clean_code}_stock_data.csv"),
+                os.path.join(sdir, f"{clean_code}_all_history.csv"),
+                os.path.join(sdir, f"{clean_code}.csv"),
+            ])
         hist_candidates = list(dict.fromkeys(hist_candidates))
         hist_file = next((p for p in hist_candidates if os.path.exists(p)), None)
 
@@ -289,6 +303,16 @@ class DataFetcher:
             data_dir,
             ['_stock_data.csv', '_all_history.csv', '_stock_data_15m.csv', '_stock_data_30m.csv']
         )
+        base_name = os.path.basename(os.path.normpath(data_dir))
+        parent_dir = os.path.dirname(os.path.normpath(data_dir))
+        alt_name = 'historical_data' if base_name == 'data' else ('data' if base_name == 'historical_data' else None)
+        if alt_name:
+            alt_dir = os.path.join(parent_dir, alt_name)
+            if os.path.isdir(alt_dir):
+                hist_codes.update(extract_codes(
+                    alt_dir,
+                    ['_stock_data.csv', '_all_history.csv', '_stock_data_15m.csv', '_stock_data_30m.csv']
+                ))
         pred_codes = extract_codes(
             model_dir,
             ['_wf_predictions_auto.csv', '_wf_predictions.csv',

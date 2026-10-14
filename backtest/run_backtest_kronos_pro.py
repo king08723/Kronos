@@ -46,7 +46,10 @@ for _p in (PROJECT_ROOT, SCRIPT_DIR, EXAMPLES_DIR):
 
 
 def resolve_data_dir() -> str:
-    """回测行情数据存储目录：全部固定收敛至 backtest/data"""
+    """回测行情数据存储目录：优先收敛至独立解耦目录 backtest/historical_data，向下兼容 backtest/data"""
+    hist_data = os.path.join(SCRIPT_DIR, "historical_data")
+    if os.path.exists(hist_data):
+        return hist_data
     local_data = os.path.join(SCRIPT_DIR, "data")
     os.makedirs(local_data, exist_ok=True)
     return local_data
@@ -231,6 +234,8 @@ def cli_main():
                         help="粒子滤波验证窗口天数，默认 3")
     parser.add_argument("--pf-threshold", type=float, default=0.35,
                         help="粒子滤波置信度准入阈值，默认 0.35")
+    parser.add_argument("--device", type=str, default=None,
+                        help="计算设备 (auto/mps/cuda/cpu，默认自动检测，Mac苹果芯片优先mps)")
     parser.add_argument("--no-log", action="store_true",
                         help="关闭本地文件日志落盘（仅控制台输出，不生成 .log 文件）")
     parser.add_argument("--clear-log", action="store_true",
@@ -297,7 +302,7 @@ def cli_main():
               f"step_size={args.step_size}, samples={args.samples}, "
               f"history_days={args.history_days}, particle_filter={args.particle_filter}")
         print()
-        fetcher = KronosDataFetcher()
+        fetcher = KronosDataFetcher(device=args.device)
         try:
             hist_df, pred_df = fetcher.run_auto_pipeline(
                 stock_code=target_stock,

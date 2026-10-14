@@ -42,6 +42,10 @@ UI_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKTEST_DIR = os.path.dirname(UI_DIR)
 
 def resolve_data_dir() -> str:
+    """回测行情数据存储目录：优先收敛至独立解耦目录 backtest/historical_data，向下兼容 backtest/data"""
+    hist_data = os.path.join(BACKTEST_DIR, "historical_data")
+    if os.path.exists(hist_data):
+        return hist_data
     local_data = os.path.join(BACKTEST_DIR, "data")
     os.makedirs(local_data, exist_ok=True)
     return local_data

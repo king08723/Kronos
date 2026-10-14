@@ -82,17 +82,24 @@ class MetricsEvaluator:
         # 交易统计
         sell_trades = [t for t in trades if t['action'] == 'SELL' and t['reason'] != '回测结束强平']
         forced = [t for t in trades if t['action'] == 'SELL' and t['reason'] == '回测结束强平']
-        win_trades = [t for t in sell_trades if t['pnl_pct'] > 0]
-        lose_trades = [t for t in sell_trades if t['pnl_pct'] <= 0]
+        def _get_trade_net_pnl(t):
+            if 'pnl_amt' in t and t['pnl_amt'] is not None and not np.isnan(t['pnl_amt']):
+                return float(t['pnl_amt'])
+            # 兼容缺失 pnl_amt 的极简模拟数据
+            return t['pnl_pct'] * t['price'] * t['shares'] / (1 + t['pnl_pct']) if t['pnl_pct'] > -1 else 0.0
+
+        # 按扣除手续费后的真实净盈亏金额判定胜负与金额
+        win_trades = [t for t in sell_trades if _get_trade_net_pnl(t) > 0]
+        lose_trades = [t for t in sell_trades if _get_trade_net_pnl(t) <= 0]
 
         win_rate = len(win_trades) / len(sell_trades) if sell_trades else 0.0
         avg_pnl = float(np.mean([t['pnl_pct'] for t in sell_trades])) if sell_trades else 0.0
 
-        def _amount(t):
-            return t['pnl_pct'] * t['price'] * t['shares'] / (1 + t['pnl_pct']) if t['pnl_pct'] > -1 else 0.0
+        win_amounts = [_get_trade_net_pnl(t) for t in win_trades]
+        lose_amounts = [abs(_get_trade_net_pnl(t)) for t in lose_trades]
 
-        total_gain = sum(_amount(t) for t in win_trades)
-        total_loss = abs(sum(_amount(t) for t in lose_trades))
+        total_gain = sum(win_amounts)
+        total_loss = sum(lose_amounts)
         if total_loss > 1e-8:
             profit_factor = total_gain / total_loss
         elif total_gain > 0:

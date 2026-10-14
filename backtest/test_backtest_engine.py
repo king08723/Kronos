@@ -330,5 +330,45 @@ class TestBacktestEngineIntegration(unittest.TestCase):
         self.assertEqual(trades[0]["action"], "BUY")
 
 
+class TestMetricsEvaluator(unittest.TestCase):
+    """绩效评估器指标口径与净盈亏比测试"""
+
+    def test_net_profit_factor_with_real_pnl_amt(self):
+        """测试使用扣除手续费后的真实净盈亏金额 pnl_amt 计算盈亏比"""
+        from backtest.engine.metrics import MetricsEvaluator
+        profile = MarketProfile.for_stock("600036")
+
+        # 构造测试交易流水
+        # 交易 1: 毛利 2000，扣费 200，净利 1800
+        # 交易 2: 毛亏 1000，扣费 200，净亏 1200
+        # 交易 3: 名义微利 +0.01% (毛利 5 元)，但手续费 15 元导致净亏 -10 元
+        trades = [
+            {'action': 'SELL', 'price': 22.0, 'shares': 1000, 'pnl_pct': 0.10, 'pnl_amt': 1800.0, 'reason': '移动止盈', 'holding_days': 3},
+            {'action': 'SELL', 'price': 19.0, 'shares': 1000, 'pnl_pct': -0.05, 'pnl_amt': -1200.0, 'reason': '硬止损', 'holding_days': 2},
+            {'action': 'SELL', 'price': 20.01, 'shares': 1000, 'pnl_pct': 0.0005, 'pnl_amt': -10.0, 'reason': '保本离场', 'holding_days': 1},
+        ]
+        dates = pd.date_range("2026-01-01", periods=10, freq="B")
+        backtest_df = pd.DataFrame({
+            'portfolio_value': [100000.0 + i * 50 for i in range(10)],
+            'shares': [0] * 10,
+            'returns': [0.0005] * 10,
+        }, index=dates)
+
+        metrics = MetricsEvaluator.evaluate(
+            backtest_df=backtest_df,
+            trades=trades,
+            initial_capital=100000.0,
+            profile=profile,
+        )
+
+        # 胜率验证：只有 1 笔真实净盈利（1800 > 0），另外 2 笔为真实净亏损（-1200, -10），胜率 = 1/3
+        self.assertAlmostEqual(metrics['胜率'], 1.0 / 3.0, places=4)
+
+        # 净盈亏比验证：总净盈利 1800，总净亏损 1210 => 1800 / 1210 ≈ 1.4876
+        expected_pf = 1800.0 / 1210.0
+        self.assertAlmostEqual(metrics['盈亏比'], expected_pf, places=4)
+
+
 if __name__ == "__main__":
     unittest.main()
+

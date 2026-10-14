@@ -56,6 +56,18 @@ def setup_logger(
     global_log_file = os.path.abspath(os.path.join(log_dir, "kronos_backtest.log"))
 
     if file_logging and enabled:
+        # 全局汇总日志 kronos_backtest.log：若切换了目录，关闭并卸载旧汇总 Handler
+        for h in list(logger.handlers):
+            if isinstance(h, logging.FileHandler):
+                bf = getattr(h, 'baseFilename', None)
+                if bf and os.path.basename(bf) == "kronos_backtest.log" and bf != global_log_file:
+                    try:
+                        h.flush()
+                        h.close()
+                    except Exception:
+                        pass
+                    logger.removeHandler(h)
+
         # 全局汇总日志 kronos_backtest.log (确保仅添加一次)
         if not any(getattr(h, 'baseFilename', None) == global_log_file for h in logger.handlers):
             fh = logging.FileHandler(global_log_file, encoding='utf-8', mode='a')
@@ -85,7 +97,7 @@ def attach_stock_logger(
     log_dir: str = None,
     enabled: bool = True,
 ) -> Optional[logging.Handler]:
-    """为指定标的附加独立的日志 Handler，输出至 output/{stock_code}_backtest.log"""
+    """为指定标的附加独立的日志 Handler，输出至 {log_dir}/{stock_code}_backtest.log"""
     if not enabled:
         return None
     if log_dir is None:
@@ -98,6 +110,9 @@ def attach_stock_logger(
     for h in logger.handlers:
         if getattr(h, 'baseFilename', None) == stock_log_file:
             return h
+
+    # 挂载前先安全清理同名标的在其他路径的旧句柄（防止跨路径重复记录）
+    detach_stock_logger(logger, stock_code=clean_code)
 
     formatter = logging.Formatter(
         '[%(asctime)s] [%(levelname)s] %(message)s',
@@ -118,24 +133,34 @@ def detach_stock_logger(
     """安全移除并关闭指定标的（或全部标的）的独立日志 FileHandler"""
     if logger is None:
         logger = logging.getLogger("KronosBacktest")
-    if log_dir is None:
-        log_dir = DEFAULT_LOG_DIR
 
-    target_file = None
+    clean_code = None
+    target_filename = None
     if stock_code:
         clean_code, _, _ = SymbolResolver.resolve(stock_code)
         clean_code = clean_code or stock_code
-        target_file = os.path.abspath(os.path.join(log_dir, f"{clean_code}_backtest.log"))
+        target_filename = f"{clean_code}_backtest.log"
 
-    global_log_file = os.path.abspath(os.path.join(log_dir, "kronos_backtest.log"))
+    target_file = None
+    if log_dir and clean_code:
+        target_file = os.path.abspath(os.path.join(log_dir, target_filename))
 
     handlers_to_remove = []
     for h in list(logger.handlers):
         if isinstance(h, logging.FileHandler):
             bf = getattr(h, 'baseFilename', None)
-            if target_file and bf == target_file:
-                handlers_to_remove.append(h)
-            elif not target_file and bf != global_log_file:
+            if not bf:
+                continue
+            # 严格保留全局/批次主汇总日志 (kronos_backtest.log)
+            if os.path.basename(bf) == "kronos_backtest.log":
+                continue
+
+            if stock_code:
+                # 匹配完整路径或文件名（避免因 log_dir 绝对路径差异遗漏）
+                if (target_file and bf == target_file) or (os.path.basename(bf) == target_filename):
+                    handlers_to_remove.append(h)
+            else:
+                # 未指定标的，则清理所有标的的独立日志 Handler
                 handlers_to_remove.append(h)
 
     for h in handlers_to_remove:
@@ -145,6 +170,11 @@ def detach_stock_logger(
         except Exception:
             pass
         logger.removeHandler(h)
+
+
+def detach_all_stock_loggers(logger: logging.Logger = None) -> None:
+    """便利函数：安全移除并关闭全局 Logger 上所有单标的独立 Handler"""
+    detach_stock_logger(logger=logger, stock_code=None)
 
 
 def set_logging_state(

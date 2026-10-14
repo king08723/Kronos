@@ -225,6 +225,64 @@ class TestSignalCausality(unittest.TestCase):
             msg="去偏后预期收益 (expected_return_adj) 泄露了当天收盘价！"
         )
 
+    def test_warmup_period_no_future_leakage(self):
+        """
+        验证滚动自校准预热期杜绝未来函数：
+        在样本前 1~10 天样本不足时，严禁使用全样本 quantile 填充，
+        篡改未来（第 20 天起）的数据绝对不能改变前 10 天的预热期门槛与信号状态。
+        """
+        from run_backtest_kronos_pro import KronosBacktesterPro
+        bt = KronosBacktesterPro(data_dir=str(BACKTEST_DIR), model_dir=str(BACKTEST_DIR))
+        bt.set_market('600036', market='CN')
+
+        dates = pd.date_range('2024-01-01', periods=50, freq='B')
+        base_p = 10.0 + np.sin(np.linspace(0, 3.14 * 4, 50)) * 0.5
+
+        hist_df = pd.DataFrame({
+            'open': base_p,
+            'high': base_p * 1.01,
+            'low': base_p * 0.99,
+            'close': base_p,
+            'volume': 1000000,
+        }, index=dates)
+
+        pred_df = pd.DataFrame({
+            'pred_close': base_p * 1.05,
+            'pred_close_1d': base_p * 1.01,
+            'pred_min_down': -0.01,
+            'forecast_horizon': 5,
+        }, index=dates)
+
+        sig_orig = bt.align_and_generate_signals(hist_df.copy(), pred_df.copy())
+
+        # 极端篡改第 25 天后的价格（未来数据翻三倍）
+        hist_df_tampered = hist_df.copy()
+        hist_df_tampered.iloc[25:, hist_df_tampered.columns.get_loc('close')] *= 3.0
+        hist_df_tampered.iloc[25:, hist_df_tampered.columns.get_loc('open')] *= 3.0
+        hist_df_tampered.iloc[25:, hist_df_tampered.columns.get_loc('high')] *= 3.0
+        hist_df_tampered.iloc[25:, hist_df_tampered.columns.get_loc('low')] *= 3.0
+
+        pred_df_tampered = pred_df.copy()
+        pred_df_tampered.iloc[25:, pred_df_tampered.columns.get_loc('pred_close')] *= 3.0
+
+        sig_tampered = bt.align_and_generate_signals(hist_df_tampered.copy(), pred_df_tampered.copy())
+
+        # 检验对齐后的前 8 天预热期
+        valid_warmup_dates = list(sig_orig.index)[:8]
+        for d in valid_warmup_dates:
+            # 预热期必须完全不受未来暴涨影响
+            self.assertEqual(sig_orig.loc[d, 'exec_signal'], 0)
+            self.assertEqual(sig_tampered.loc[d, 'exec_signal'], 0)
+            self.assertEqual(sig_orig.loc[d, 'veto_reason'], '滚动校准窗口预热期不足')
+            self.assertEqual(sig_tampered.loc[d, 'veto_reason'], '滚动校准窗口预热期不足')
+            self.assertTrue(pd.isna(sig_orig.loc[d, 'entry_threshold']))
+            self.assertTrue(pd.isna(sig_tampered.loc[d, 'entry_threshold']))
+
+        # 全时段因果性截断探针验证
+        res = bt.check_causality(hist_df, pred_df, n_probe=8)
+        self.assertTrue(res.get('passed', False), f"因果律检验未通过: {res.get('不一致项')}")
+
+
 
 class TestLimitDownStopLossProtection(unittest.TestCase):
     def test_stop_loss_blocked_on_limit_down_lock(self):

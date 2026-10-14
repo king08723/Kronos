@@ -373,15 +373,15 @@ class KronosStrategy(BaseStrategy):
             df['entry_threshold'] = roll.quantile(entry_percentile)
         warmup = df['entry_threshold'].isna()
         if warmup.any():
-            fallback = df['signal_score'].quantile(entry_percentile)
-            df.loc[warmup, 'entry_threshold'] = fallback
+            _add_veto(warmup, '滚动校准窗口预热期不足')
 
         # 粒子滤波不确定性惩罚：置信度低于 0.6 时动态上浮入场分位要求 (要求更充足的安全边际)
         if particle_filter and 'pf_confidence' in df.columns:
             pf_entry_penalty = np.where(df['pf_confidence'] < 0.6, (0.6 - df['pf_confidence']) * 0.4, 0.0)
             df['entry_threshold'] = df['entry_threshold'] + pf_entry_penalty
 
-        buy_cond = df['signal_score'] > df['entry_threshold']
+        # 严格防偷价：预热期未建立稳定滚动分布前禁止交易
+        buy_cond = (~warmup) & (df['signal_score'] > df['entry_threshold'])
         _add_veto(~buy_cond, '信号强度未进入滚动分位阈值')
 
         if 'pred_slope' in df.columns:
@@ -538,12 +538,17 @@ class KronosStrategy(BaseStrategy):
         if len(dates) < 40:
             return {'error': '样本过短，无法做因果性检验'}
 
-        # 在后半段均匀取若干个探针点
-        start = len(dates) // 2
+        # 探针从满足最小重叠天数的早期开始覆盖全时段，保证预热期与成熟期均无未来函数
+        min_ov = int(kwargs.get('min_overlap_days', 10))
+        start = max(min_ov, 10)
+        if len(dates) <= start:
+            return {'error': '有效重叠样本不足以进行截断因果性检验'}
+
         probes = [dates[i] for i in
                   np.linspace(start, len(dates) - 1, min(n_probe, len(dates) - start)).astype(int)]
 
         mismatches = []
+        check_cols = ('volatility', 'atr_pct', 'expected_return', 'signal_score', 'entry_threshold', 'exec_signal')
         for d in probes:
             h_trunc = hist_df[hist_df.index <= d]
             p_trunc = pred_df[pred_df.index <= d]
@@ -553,15 +558,16 @@ class KronosStrategy(BaseStrategy):
                 continue
             if d not in partial.index:
                 continue
-            for col in ('volatility', 'atr_pct', 'expected_return'):
+            for col in check_cols:
                 if col not in full.columns or col not in partial.columns:
                     continue
                 a, b = full.loc[d, col], partial.loc[d, col]
                 if pd.isna(a) and pd.isna(b):
                     continue
-                if pd.isna(a) != pd.isna(b) or abs(float(a) - float(b)) > 1e-9:
+                if pd.isna(a) != pd.isna(b) or abs(float(a) - float(b)) > 1e-6:
                     mismatches.append({'date': str(d.date()), 'col': col,
-                                       'full': float(a), 'truncated': float(b)})
+                                       'full': float(a) if not pd.isna(a) else None,
+                                       'truncated': float(b) if not pd.isna(b) else None})
 
         return {
             '探针数': len(probes),

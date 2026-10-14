@@ -22,7 +22,7 @@ import pandas as pd
 
 from ..core.types import TimeFrame, Position
 from ..core.market_rules import SymbolResolver, MarketProfile
-from ..core.logger import attach_stock_logger, clear_logs
+from ..core.logger import attach_stock_logger, detach_stock_logger, clear_logs
 from ..execution.sizer import RiskBudgetSizer
 from ..execution.risk_manager import ExitStateMachine
 from ..execution.simulated_broker import SimulatedBroker
@@ -68,6 +68,7 @@ class KronosBacktesterPro:
         self.initial_capital = initial_capital if initial_capital is not None else self.profile.default_capital
         self.current_stock_code = None
         self._stock_log_handler = None
+        self.log_dir = None
         self.enable_log = enable_log
         # 滑点：未显式指定时跟随市场默认（A 0.10% / HK 0.15% / US 0.05%）
         self._slippage_override = slippage_rate is not None
@@ -88,7 +89,7 @@ class KronosBacktesterPro:
             self._override['stamp_duty_sell'] = stamp_duty_rate
 
     def cleanup_logger(self):
-        """安全释放当前标的的独立日志 Handler"""
+        """安全释放当前标的的独立日志 Handler，并确保全局 Logger 不残留此标的的句柄"""
         if self._stock_log_handler:
             try:
                 self._stock_log_handler.flush()
@@ -97,6 +98,12 @@ class KronosBacktesterPro:
             except Exception:
                 pass
             self._stock_log_handler = None
+
+        if self.current_stock_code:
+            try:
+                detach_stock_logger(logger, stock_code=self.current_stock_code, log_dir=self.log_dir)
+            except Exception:
+                pass
 
     def set_market(
         self,
@@ -109,6 +116,12 @@ class KronosBacktesterPro:
         """依股票代码/名称切换市场规则，并保留用户显式覆盖的费率项"""
         if enable_log is not None:
             self.enable_log = enable_log
+        if log_dir is not None:
+            self.log_dir = log_dir
+
+        # 切换标的前，先彻底释放前一个标的的独立 Handler
+        self.cleanup_logger()
+
         clean_code, _, _ = SymbolResolver.resolve(stock_code)
         self.current_stock_code = clean_code or stock_code
         self.profile = MarketProfile.for_stock(
@@ -120,13 +133,12 @@ class KronosBacktesterPro:
         if not self._slippage_override:
             self.slippage_rate = self.profile.default_slippage
 
-        # 切换标的时安全移除前一个标的的独立 Handler
-        self.cleanup_logger()
-
         # 根据开关挂载单标的独立日志 Handler
         if self.enable_log:
             try:
-                self._stock_log_handler = attach_stock_logger(logger, self.current_stock_code, log_dir, enabled=True)
+                self._stock_log_handler = attach_stock_logger(
+                    logger, self.current_stock_code, self.log_dir, enabled=True
+                )
             except Exception:
                 pass
 
@@ -149,13 +161,11 @@ class KronosBacktesterPro:
     # 1. 数据加载
     # ------------------------------------------------------------------
 
-
-
     def load_data(self, stock_code: str, particle_filter: bool = False) -> tuple:
         """加载并标准化历史行情与模型预测数据"""
         clean_code, det_market, _ = SymbolResolver.resolve(stock_code, market=self.profile.market)
         if self.profile.market != det_market:
-            self.set_market(clean_code, market=det_market)
+            self.set_market(clean_code, market=det_market, log_dir=self.log_dir, enable_log=self.enable_log)
         hist_df, _ = DataFetcher.load_stock_history(stock_code, data_dir=self.data_dir, market=self.profile.market)
         pred_df = DataFetcher.load_prediction_data(stock_code, model_dir=self.model_dir, market=self.profile.market, particle_filter=particle_filter)
         return hist_df, pred_df
@@ -637,6 +647,8 @@ class KronosBacktesterPro:
             print(f"\n❌ 回测异常: {e}")
             traceback.print_exc()
             return None, None, None, None, None
+        finally:
+            self.cleanup_logger()
 
     def export_backtest_artifacts(
         self,

@@ -47,6 +47,10 @@ for p in [PROJECT_ROOT, CURRENT_DIR, EXAMPLES_DIR]:
         sys.path.insert(0, p)
 
 def resolve_data_dir() -> str:
+    """回测行情数据存储目录：优先收敛至独立解耦目录 backtest/historical_data，向下兼容 backtest/data"""
+    hist_data = os.path.join(CURRENT_DIR, "historical_data")
+    if os.path.exists(hist_data):
+        return hist_data
     local_data = os.path.join(CURRENT_DIR, "data")
     os.makedirs(local_data, exist_ok=True)
     return local_data
@@ -230,7 +234,8 @@ class BatchBacktester:
                          calib_window_min=20, vol_high_thresh=0.40,
                          vol_low_thresh=0.20, risk_per_trade=0.01,
                          max_position=0.80, intraday_stop=True,
-                         require_skill=False, generate_plots=True):
+                         require_skill=False, generate_plots=True,
+                         enable_log: bool = True, **kwargs):
         code = stock_info['stock_code']
         name = stock_info['stock_name']
         market = stock_info.get('market')
@@ -268,9 +273,10 @@ class BatchBacktester:
                 max_auto_horizon=max_auto_horizon,
                 force_refresh=force_refresh,
                 min_down_quantile=min_down_quantile,
+                market=market,
             )
 
-        enable_log = kwargs.get('enable_log', True)
+        enable_log = kwargs.get('enable_log', enable_log)
 
         # 回测引擎
         bt = KronosBacktesterPro(
@@ -373,11 +379,15 @@ class BatchBacktester:
         t0 = time.time()
 
         def _fail_result(c, si, err):
+            mkt = si.get('market')
+            prof = MarketProfile.for_stock(c, market=mkt, stock_name=si.get('stock_name'))
             return {
                 'stock_code': c,
                 'stock_name': si['stock_name'],
-                'market': si.get('market', 'UNKNOWN'),
-                'currency': 'CNY', 'status': 'FAILED',
+                'market': prof.market,
+                'currency': prof.currency,
+                'currency_symbol': prof.currency_symbol,
+                'status': 'FAILED',
                 'error': str(err), 'metrics': {}, 'skill': {},
             }
 
@@ -639,6 +649,8 @@ def cli_main():
     parser.add_argument("--output-dir", type=str,
                         default=os.path.join(CURRENT_DIR, "batch"),
                         help="回测结果输出目录（默认 backtest/batch）")
+    parser.add_argument("--device", type=str, default=None,
+                        help="计算设备 (auto/mps/cuda/cpu，默认自动检测，Mac苹果芯片优先mps)")
     parser.add_argument("--no-log", action="store_true",
                         help="关闭本地文件日志落盘（仅控制台输出，不生成 .log 文件）")
     parser.add_argument("--clear-logs", action="store_true",
@@ -690,7 +702,7 @@ def cli_main():
     print(f"  输出    : {args.output_dir}")
     print("=" * 75)
 
-    engine = BatchBacktester(log_dir=args.output_dir)
+    engine = BatchBacktester(log_dir=args.output_dir, device=args.device)
 
     valid = engine.prepare_data_pool(
         stock_list=pool, data_dir=args.data_dir,

@@ -58,14 +58,13 @@ class KronosDataFetcher:
         self._predictor = None
         self._model_name = model_name
         self._tokenizer_name = tokenizer_name
-        # 在 macOS 上，PyTorch MPS (Metal) 驱动在长序列循环自回归时存在已知系统级竞态崩溃缺陷 (IOGPUMetalCommandBuffer assertion)
-        # 而 Apple Silicon 统一内存的 CPU 执行 Kronos 仅需 0.19s/次，因此 macOS 默认选用稳健高速的 cpu
-        if device is None:
+        # 硬件加速设备优先级：CUDA > Apple Silicon MPS (Metal) > CPU
+        if device is None or device == "auto":
             import torch
             if torch.cuda.is_available():
                 device = "cuda:0"
-            elif sys.platform == "darwin":
-                device = "cpu"
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                device = "mps"
             else:
                 device = "cpu"
         self._device = device
@@ -75,16 +74,26 @@ class KronosDataFetcher:
         """懒加载：首次调用时才初始化模型，避免仅做数据检查时浪费显存"""
         if self._predictor is not None:
             return
-        print("\n🧠 正在加载 Kronos 模型（首次使用，请稍候）...")
+        print(f"\n🧠 正在加载 Kronos 模型 (目标设备: {self._device}，首次使用请稍候)...")
         # 动态导入，避免在不使用 --auto 时强制要求模型依赖
         try:
             sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from model import Kronos, KronosTokenizer, KronosPredictor
             tokenizer = KronosTokenizer.from_pretrained(self._tokenizer_name)
             model = Kronos.from_pretrained(self._model_name)
-            self._predictor = KronosPredictor(model, tokenizer,
-                                               device=self._device,
-                                               max_context=self._max_context)
+            try:
+                self._predictor = KronosPredictor(model, tokenizer,
+                                                   device=self._device,
+                                                   max_context=self._max_context)
+            except Exception as e_dev:
+                if self._device == "mps":
+                    print(f"⚠️ Apple Silicon MPS 设备初始化异常 ({e_dev})，自动降级回退至 CPU...")
+                    self._device = "cpu"
+                    self._predictor = KronosPredictor(model, tokenizer,
+                                                       device="cpu",
+                                                       max_context=self._max_context)
+                else:
+                    raise
             print(f"✅ 模型加载完成 (device: {self._predictor.device})")
         except ImportError as e:
             raise ImportError(
@@ -575,6 +584,7 @@ class KronosDataFetcher:
         particle_filter: bool = False,
         pf_val_window: int = 3,
         pf_temperature: float = None,
+        market: str = None,
     ) -> pd.DataFrame:
         """
         Walk-Forward 逐步滚动预测，生成覆盖回测窗口的样本外多时界/自适应极值预测序列。
@@ -639,7 +649,7 @@ class KronosDataFetcher:
         if particle_filter:
             cache_suffix = f"{cache_suffix}_pf"
 
-        clean_code, _, prefix = SymbolResolver.resolve(stock_code)
+        clean_code, det_market, prefix = SymbolResolver.resolve(stock_code, market=market)
 
         # 优先检查本地是否已有对应时界的 Walk-Forward 预测缓存
         if particle_filter:
@@ -705,8 +715,9 @@ class KronosDataFetcher:
         test_df   = hist_df.iloc[-test_days:]
         test_dates = test_df.index.tolist()
 
+        mkt_tag = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
         horizon_label = f"Auto (最大探测={eval_horizon}天)" if is_auto_horizon else f"固定={eval_horizon}天"
-        print(f"\n📈 Walk-Forward 预测配置 (时界模式: {horizon_label}):")
+        print(f"\n📈 Walk-Forward 预测配置 [{mkt_tag} {clean_code}] (时界模式: {horizon_label}):")
         print(f"   训练区间: {train_df.index.min().date()} → {train_df.index.max().date()} ({len(train_df)} 日)")
         print(f"   回测区间: {test_df.index.min().date()} → {test_df.index.max().date()} ({len(test_df)} 日)")
         print(f"   lookback={lookback}, step_size={step_size}, sample_count={sample_count}")
@@ -766,7 +777,7 @@ class KronosDataFetcher:
             else:
                 avail_dates = test_dates[anchor_idx:]
                 needed = eval_horizon - len(avail_dates)
-                extra_dates = generate_future_dates_with_holidays(avail_dates[-1], needed + 5)[:needed]
+                extra_dates = generate_future_dates_with_holidays(avail_dates[-1], needed + 5, market=det_market, verbose=False)[:needed]
                 target_future_dates = avail_dates + [pd.Timestamp(d) for d in extra_dates]
 
             # 拼接验证窗口与未来预测窗口
@@ -974,6 +985,7 @@ class KronosDataFetcher:
             particle_filter=particle_filter,
             pf_val_window=pf_val_window,
             pf_temperature=pf_temperature,
+            market=det_market,
         )
 
         return hist_df, pred_df

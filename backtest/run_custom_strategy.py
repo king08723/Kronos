@@ -37,7 +37,8 @@ def run_custom_strategy_demo(
     print(f"🚀 运行自定义量化策略回测: {stock_code} [{market}] 周期: {timeframe}")
     print(f"{'='*64}")
 
-    data_dir = os.path.join(SCRIPT_DIR, "data")
+    hist_data = os.path.join(SCRIPT_DIR, "historical_data")
+    data_dir = hist_data if os.path.exists(hist_data) else os.path.join(SCRIPT_DIR, "data")
     output_dir = os.path.join(SCRIPT_DIR, "output")
     tf = TimeFrame.from_str(timeframe)
 

@@ -1323,7 +1323,7 @@ def calculate_prediction_parameters(df, target_days=100):
     return lookback, pred_len
 
 
-def generate_future_dates_with_holidays(last_date, pred_len, market='CN'):
+def generate_future_dates_with_holidays(last_date, pred_len, market='CN', verbose=True):
     """
     生成未来的交易日日期，智能排除周末与对应市场法定休市节假日（涵盖 2024~2027 年）。
     支持 A股(CN)、港股(HK)、美股(US) 三大市场。
@@ -1332,6 +1332,7 @@ def generate_future_dates_with_holidays(last_date, pred_len, market='CN'):
     last_date: 最后一个历史数据的日期
     pred_len: 预测期数
     market: 市场类型 ('CN'/'HK'/'US')，默认 'CN'
+    verbose: 是否打印生成明细日志，默认 True
 
     返回:
     future_dates: 未来的交易日日期列表
@@ -1354,10 +1355,11 @@ def generate_future_dates_with_holidays(last_date, pred_len, market='CN'):
                 holidays_encountered += 1
         current_date += timedelta(days=1)
 
-    print(f"📅 生成的{market_label}未来交易日: 共 {len(future_dates)} 天")
-    print(f"   起始日期: {future_dates[0].strftime('%Y-%m-%d')}")
-    print(f"   结束日期: {future_dates[-1].strftime('%Y-%m-%d')}")
-    print(f"   期间排除{market_label}休市节假日: {holidays_encountered} 天")
+    if verbose:
+        print(f"📅 生成的{market_label}未来交易日: 共 {len(future_dates)} 天")
+        print(f"   起始日期: {future_dates[0].strftime('%Y-%m-%d')}")
+        print(f"   结束日期: {future_dates[-1].strftime('%Y-%m-%d')}")
+        print(f"   期间排除{market_label}休市节假日: {holidays_encountered} 天")
 
     return future_dates[:pred_len]
 
@@ -2048,7 +2050,7 @@ def main(stock_code="002354", stock_name="天娱数科", data_dir="./data", pred
         # 【示例数据: future_dates 为未来预测交易日列表，长度如 pred_len=66】
         # [Timestamp('2025-01-02'), Timestamp('2025-01-03'), ..., Timestamp('2025-04-10')]
         last_historical_date = df['timestamps'].iloc[-1]
-        future_dates = generate_future_dates_with_holidays(last_historical_date, pred_len)
+        future_dates = generate_future_dates_with_holidays(last_historical_date, pred_len, market=market_type)
 
         print(f"输入数据形状: {x_df.shape}")
         print(f"历史数据时间范围: {x_timestamp.iloc[0]} 到 {x_timestamp.iloc[-1]}")

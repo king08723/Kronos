@@ -57,8 +57,11 @@ except ImportError:
 OUTPUT_DIR = os.path.join(CURRENT_DIR, "output")
 BATCH_OUTPUT_DIR = os.path.join(CURRENT_DIR, "batch")
 
-# 行情与预测数据：全部统一收敛于 backtest/data 与 backtest/yuce
+# 行情与预测数据：行情优先收敛于 backtest/historical_data，预测收敛于 backtest/yuce
 def resolve_data_dir() -> str:
+    hist_data = os.path.join(CURRENT_DIR, "historical_data")
+    if os.path.exists(hist_data):
+        return hist_data
     local_data = os.path.join(CURRENT_DIR, "data")
     os.makedirs(local_data, exist_ok=True)
     return local_data
@@ -641,16 +644,19 @@ def render_batch_mode():
                     t_copy['date'] = pd.to_datetime(t_copy['date'])
                     t_records = t_copy.to_dict('records')
 
-                bt_pro = KronosBacktesterPro(data_dir=DATA_DIR, model_dir=PRED_DIR)
-                bt_pro.set_market(target_c, market=prof.market)
-                p_fig = bt_pro.plot_backtest_interactive(
-                    signal_df=pd.DataFrame(),
-                    backtest_df=d_df,
-                    metrics=m,
-                    trades=t_records,
-                    stock_code=target_c,
-                    crosshair_mode="x"
-                )
+                bt_pro = KronosBacktesterPro(data_dir=DATA_DIR, model_dir=PRED_DIR, enable_log=False)
+                bt_pro.set_market(target_c, market=prof.market, enable_log=False)
+                try:
+                    p_fig = bt_pro.plot_backtest_interactive(
+                        signal_df=pd.DataFrame(),
+                        backtest_df=d_df,
+                        metrics=m,
+                        trades=t_records,
+                        stock_code=target_c,
+                        crosshair_mode="x"
+                    )
+                finally:
+                    bt_pro.cleanup_logger()
                 if p_fig is not None:
                     st.plotly_chart(p_fig, width="stretch", key=f"drill_plotly_{target_c}")
                     inject_continuous_crosshair_script()
