@@ -220,10 +220,15 @@
 - 盘中各自触发 ATR 止损或波峰止盈，资金实时回流至总账户；
 - 真实测算全组合的夏普比率、卡玛比率与资金闲置率。
 
-### 3. 实盘解耦架构
-实盘时不重写逻辑，仅将 `KronosBacktesterPro` 作为信号中枢，通过轻量级网关对接券商官方接口：
-- **A 股**：迅投 QMT / 恒生 PTrade Python 原生网关；
-- **港美股**：盈透证券 Interactive Brokers (IBKR API) / 富途 OpenAPI。
+### 3. 实盘解耦与微服务化架构 (V2.0 工业化落地)
+已在 `backtest/` 完成全模块解耦重构，通过统一经纪商抽象实现「同一套策略代码，回测与实盘无缝复用」：
+- **统一经纪商接口**：[`BaseBroker`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/broker_base.py) 统一定义报单、撤单、持仓与账户净值查询。
+- **仿真撮合内核**：[`SimulatedBroker`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/simulated_broker.py) 全真模拟港美股/A股滑点、佣金、印花税、整手申报与跌停封死。
+- **港美股实盘网关**：
+  - 富途证券：[`FutuBrokerAdapter`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/live_broker_adapter.py)（对接 Futu OpenD，覆盖港股/美股正股交易与仿真测试）；
+  - 盈透证券：[`InteractiveBrokersAdapter`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/live_broker_adapter.py)（对接 IBKR API / TWS / Gateway，覆盖美股/港股全品种与日内高频 Bar）。
+- **多时间粒度支持**：[`TimeFrame`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/core/types.py) 支持 15m / 30m / 60m / 日线多周期回测，自动根据各交易所交易时段（美股 6.5h / 港股 5.5h / A股 4.0h）精准折算年化因子与夏普比率。
+- **策略可插拔基类**：[`BaseStrategy`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/strategies/base.py) 支持用户 30 行代码编写任意自定义量化策略，策略与撮合引擎完全解耦。
 
 ---
 
@@ -233,7 +238,7 @@
 
 | 实施阶段 | 核心任务 | 关键交付物 | 核心避坑点 |
 | :---: | :--- | :--- | :--- |
-| **第一梯队<br/>(生死基石)** | **1. 控制盈亏比与动态止损** | 落地 `k * ATR` 动态止损与波峰止盈，锁定综合盈亏比 $\ge 1.8$ | 彻底摒弃静态百分比止损，避免高波股票被误杀。 |
+| **第一梯队<br/>(生死基石)** | **1. 控制盈亏比与动态止损** | 落地 `k * ATR` 动态止损与波峰止盈，锁定综合盈亏比 >= 1.8 | 彻底摒弃静态百分比止损，避免高波股票被误杀。 |
 |  | **2. 资金池组合化演进** | 在批次回测中加入全局共享现金池账本 | 警惕单股独立回测导致的假夏普比率幻觉。 |
 | **第二梯队<br/>(收益上限)** | **3. 前置因子库扩充与质检** | 基于 `pandas-ta` + `alphalens` 搭建特征工程流水线 | 严格遵守 Point-In-Time 财报对齐，严防未来函数。 |
 |  | **4. TradingAgents 定性排雷** | 接入 Pydantic 强类型输出与 CIO 每日白皮书 | 绝不轮询全市场，仅对开仓临门一脚的标的按需触发。 |

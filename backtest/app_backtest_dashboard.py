@@ -35,6 +35,8 @@ from run_backtest_kronos_pro import (
     get_available_stocks,
     setup_logger,
     inject_continuous_crosshair_script,
+    clear_logs,
+    set_logging_state,
 )
 
 from run_backtest_batch import (
@@ -157,11 +159,32 @@ def load_stock_batch_detail(stock_code: str, output_dir: str = BATCH_OUTPUT_DIR)
             pass
 
     d_path = os.path.join(sdir, f"{stock_code}_daily_backtest.csv")
+    if not os.path.exists(d_path):
+        d_path = os.path.join(sdir, f"{stock_code}_daily_equity.csv")
     if os.path.exists(d_path):
         try:
             detail['daily'] = pd.read_csv(d_path, encoding='utf-8-sig')
         except Exception:
             pass
+
+    s_path = os.path.join(sdir, f"{stock_code}_signals.csv")
+    if os.path.exists(s_path):
+        try:
+            detail['signals'] = pd.read_csv(s_path, encoding='utf-8-sig')
+        except Exception:
+            pass
+
+    log_path = os.path.join(sdir, f"{stock_code}_backtest.log")
+    if not os.path.exists(log_path):
+        cand = os.path.join(os.path.dirname(os.path.dirname(sdir)), "output", f"{stock_code}_backtest.log")
+        if os.path.exists(cand):
+            log_path = cand
+        else:
+            cand_global = os.path.join(os.path.dirname(os.path.dirname(sdir)), "output", "kronos_backtest.log")
+            if os.path.exists(cand_global):
+                log_path = cand_global
+    if os.path.exists(log_path):
+        detail['log_file'] = log_path
 
     img_path = os.path.join(sdir, f"{stock_code}_backtest_pro.png")
     if os.path.exists(img_path):
@@ -602,7 +625,9 @@ def render_batch_mode():
                 d6.metric("期末资产", f"{cs}{m.get('期末总资产', 0):,.0f}")
 
         # 图表与流水
-        sub_d1, sub_d2, sub_d3 = st.tabs(["📈 回测全景四联图", "📋 逐笔成交流水", "📑 逐日净值表"])
+        sub_d1, sub_d2, sub_d3, sub_d4, sub_d5 = st.tabs([
+            "📈 回测全景四联图", "📋 逐笔成交流水", "📑 逐日净值表", "🎯 预测与信号明细", "📄 运行诊断日志"
+        ])
         with sub_d1:
             if HAS_PLOTLY and detail.get('daily') is not None:
                 d_df = detail['daily'].copy()
@@ -654,6 +679,42 @@ def render_batch_mode():
                 st.dataframe(daily_df, width="stretch")
             else:
                 st.info("暂无逐日净值数据。")
+
+        with sub_d4:
+            signals_df = detail.get('signals')
+            if signals_df is not None and not signals_df.empty:
+                st.dataframe(signals_df, width="stretch")
+            else:
+                st.info("暂无预测与信号明细数据（在回测运行完成后自动落盘）。")
+
+        with sub_d5:
+            col_l1, col_l2, col_l3 = st.columns([5, 2, 2])
+            with col_l1:
+                st.markdown(f"**标的 `{target_c}` 诊断日志流水**")
+            with col_l2:
+                if st.button("🗑️ 清空当前标的日志", key=f"btn_clr_{target_c}", width="stretch"):
+                    cleared = clear_logs(log_dir=OUTPUT_DIR, stock_code=target_c)
+                    if cleared:
+                        st.toast(f"已清空 {target_c} 运行日志", icon="🧹")
+                    else:
+                        st.toast(f"未检索到 {target_c} 独立日志", icon="ℹ️")
+                    st.rerun()
+            with col_l3:
+                if st.button("🧹 清空所有回测日志", key=f"btn_clr_all_{target_c}", width="stretch"):
+                    cleared = clear_logs(log_dir=OUTPUT_DIR, clear_all=True)
+                    st.toast(f"已清空全部回测日志 (共 {len(cleared)} 个文件)", icon="🧹")
+                    st.rerun()
+
+            log_file = detail.get('log_file')
+            if log_file and os.path.exists(log_file) and os.path.getsize(log_file) > 0:
+                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()
+                stock_lines = [l for l in lines if target_c in l]
+                disp_lines = stock_lines[-250:] if stock_lines else lines[-250:]
+                st.caption(f"日志文件: `{log_file}` (展示最新 {len(disp_lines)} 行)")
+                st.code("".join(disp_lines), language="log")
+            else:
+                st.info("暂未检索到对应标的的日志文件，或日志已被清空。")
 
 
 # ===========================================================================

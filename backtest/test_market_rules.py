@@ -10,6 +10,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,13 +20,13 @@ for p in (str(ROOT), str(EXAMPLES), str(BACKTEST_DIR)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from market_rules import (  # noqa: E402
+from backtest.core.market_rules import (  # noqa: E402
     SymbolResolver,
     MarketProfile,
     HK_STAMP_DUTY_CUTOVER,
     compute_open_limit_flags,
+    validate_stock_code,
 )
-from prediction_akshare_2024_2025_copy import validate_stock_code  # noqa: E402
 
 
 def _approx(a, b, rel=1e-6):
@@ -161,5 +162,147 @@ class TestPortfolioCurve(unittest.TestCase):
             self.assertTrue(_approx(curve['Portfolio_Basket'].iloc[1], 1.05 * 1.06))
 
 
+class TestSignalCausality(unittest.TestCase):
+    def test_no_lookahead_on_same_day_close(self):
+        """
+        严谨因果律检验：
+        早盘开盘时生成撮合信号（如入场判断、均线确认、Z-Score、去偏收益），
+        在 t-1 日及之前数据、t 日开盘价与预测保持完全不变的前提下，
+        人为极端篡改 t 日的收盘价（尚未发生的未来价格），
+        验证 t 日早盘的入场决策与确认状态绝不受任何影响（杜绝 Lookahead bias）。
+        """
+        from run_backtest_kronos_pro import KronosBacktesterPro
+        bt = KronosBacktesterPro(data_dir=str(BACKTEST_DIR), model_dir=str(BACKTEST_DIR))
+        bt.set_market('600036', market='CN')
+
+        dates = pd.date_range('2024-01-01', periods=60, freq='B')
+        np.random.seed(42)
+        base_p = 10.0 + np.cumsum(np.random.randn(60) * 0.1)
+
+        hist_df = pd.DataFrame({
+            'open': base_p,
+            'high': base_p * 1.02,
+            'low': base_p * 0.98,
+            'close': base_p,
+            'volume': 1000000,
+        }, index=dates)
+
+        pred_df = pd.DataFrame({
+            'pred_close': base_p * 1.03,
+            'pred_close_1d': base_p * 1.01,
+            'pred_min_down': -0.02,
+            'forecast_horizon': 5,
+        }, index=dates)
+
+        sig_orig = bt.align_and_generate_signals(hist_df.copy(), pred_df.copy())
+
+        # 篡改第 40 天收盘价（从 10 翻倍至 20，模拟盘中大暴涨）
+        hist_df_tampered = hist_df.copy()
+        hist_df_tampered.iloc[40, hist_df_tampered.columns.get_loc('close')] = 20.0
+        sig_tampered = bt.align_and_generate_signals(hist_df_tampered.copy(), pred_df.copy())
+
+        t_date = dates[40]
+        self.assertEqual(
+            sig_orig.loc[t_date, 'confirm'],
+            sig_tampered.loc[t_date, 'confirm'],
+            "均线短期确认 (confirm) 泄露了当天收盘价！"
+        )
+        self.assertEqual(
+            sig_orig.loc[t_date, 'exec_signal'],
+            sig_tampered.loc[t_date, 'exec_signal'],
+            "早盘执行信号 (exec_signal) 泄露了当天收盘价！"
+        )
+        self.assertAlmostEqual(
+            sig_orig.loc[t_date, 'signal_score'],
+            sig_tampered.loc[t_date, 'signal_score'],
+            places=6,
+            msg="信号强度 (signal_score) 泄露了当天收盘价！"
+        )
+        self.assertAlmostEqual(
+            sig_orig.loc[t_date, 'expected_return_adj'],
+            sig_tampered.loc[t_date, 'expected_return_adj'],
+            places=6,
+            msg="去偏后预期收益 (expected_return_adj) 泄露了当天收盘价！"
+        )
+
+
+class TestLimitDownStopLossProtection(unittest.TestCase):
+    def test_stop_loss_blocked_on_limit_down_lock(self):
+        """
+        跌停板流动性防线检验：
+        持仓期间若盘中触及止损价，但当天收盘被一字跌停或封死跌停板，
+        撮合引擎严禁在当日虚构止损成交，必须阻断并顺延至次日流动性恢复后撮合。
+        """
+        from run_backtest_kronos_pro import KronosBacktesterPro
+        bt = KronosBacktesterPro(data_dir=str(BACKTEST_DIR), model_dir=str(BACKTEST_DIR))
+        bt.set_market('600036', market='CN')
+
+        dates = pd.date_range('2024-01-01', periods=4, freq='B')
+        # Day 0: 买入
+        # Day 1: 盘中击穿止损(low=8.5)，但收盘封死跌停(close=9.0, is_close_limit_down=True)
+        # Day 2: 跌停打开(open=8.8, low=8.7, high=9.1, close=9.0)，允许卖出撮合
+        signal_df = pd.DataFrame({
+            'open': [10.0, 9.8, 8.8, 8.8],
+            'high': [10.2, 9.8, 9.1, 8.9],
+            'low': [9.9, 8.5, 8.7, 8.7],
+            'close': [10.0, 9.0, 9.0, 8.8],
+            'close_prev': [10.0, 10.0, 9.0, 9.0],
+            'open_limit_up': [0, 0, 0, 0],
+            'close_limit_up': [0, 0, 0, 0],
+            'open_limit_down': [0, 0, 0, 0],
+            'close_limit_down': [0, 1, 0, 0],
+            'is_close_limit_down': [False, True, False, False],
+            'long_entry': [True, False, False, False],
+            'exec_signal': [1, 0, 0, 0],
+            'exec_bearish': [0, 0, 0, 0],
+            'exec_target_horizon': [5, 5, 5, 5],
+            'exec_position_scale': [1.0, 0.0, 0.0, 0.0],
+            'signal_score': [2.0, 0.0, 0.0, 0.0],
+            'expected_return_adj': [0.05, 0.0, 0.0, 0.0],
+            'pred_min_down': [-0.01, -0.05, -0.02, -0.02],
+            'ma_fast': [9.5, 9.5, 9.5, 9.5],
+            'ma_slow': [9.0, 9.0, 9.0, 9.0],
+            'forecast_horizon': [5, 5, 5, 5],
+            'target_horizon': [5, 5, 5, 5],
+        }, index=dates)
+
+        backtest_df, trades = bt.run_backtest_engine(
+            signal_df, hard_stop_loss=0.04, intraday_stop=True,
+            risk_per_trade=1.0, max_position_pct=1.0
+        )
+
+        # 验证 Day 1 (dates[1]) 没有成交止损卖出，平仓成交只能顺延在 Day 2 (dates[2])
+        self.assertEqual(len(trades), 2)  # [BUY, SELL]
+        sell_trade = trades[1]
+        self.assertEqual(sell_trade['action'], 'SELL')
+        self.assertEqual(pd.to_datetime(sell_trade['date']), dates[2], "未在跌停打开的次日成交，或在跌停当日违规成交！")
+
+
+class TestDebiasHorizonConsistency(unittest.TestCase):
+    def test_skill_evaluation_using_1d_pred(self):
+        """
+        预测时界与技能体检量纲一致性检验：
+        当存在 pred_close_1d 时，体检优先对齐 1 日真实收益，IC 评估口径为 '1日预期'。
+        """
+        from run_backtest_kronos_pro import KronosBacktesterPro
+        bt = KronosBacktesterPro(data_dir=str(BACKTEST_DIR), model_dir=str(BACKTEST_DIR))
+
+        dates = pd.date_range('2024-01-01', periods=30, freq='B')
+        ret_real = np.linspace(-0.02, 0.05, 30)
+        ret_pred = ret_real + 0.005  # 正相关单调序列
+        base_prev = 10.0
+        df = pd.DataFrame({
+            'close': base_prev * (1.0 + ret_real),
+            'close_prev': [base_prev] * 30,
+            'pred_close': base_prev * (1.0 + ret_pred * 2.0),     # 5日多日预测
+            'pred_close_1d': base_prev * (1.0 + ret_pred),         # 1日单日预测
+        }, index=dates)
+
+        skill = bt.evaluate_prediction_skill(df)
+        self.assertEqual(skill.get('评估口径'), '1日预期')
+        self.assertGreater(skill.get('IC', 0), 0.9)  # 严格单调正相关，IC 应当接近 1.0 且显著
+
+
 if __name__ == '__main__':
     unittest.main()
+

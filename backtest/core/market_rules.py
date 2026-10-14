@@ -149,6 +149,56 @@ class SymbolResolver:
         return clean, det_market, prefix
 
 
+def detect_market_type(stock_code: str, market: str = None) -> str:
+    """
+    智能检测股票所属市场类型 ('CN' / 'HK' / 'US')。
+    """
+    _, det_market, _ = SymbolResolver.resolve(stock_code, market=market)
+    return det_market
+
+
+def validate_stock_code(stock_code: str, market: str = None) -> tuple:
+    """
+    对用户输入的股票代码进行格式校验与市场规则匹配，提前拦截明显非法输入。
+
+    返回:
+        (is_valid: bool, error_msg: str, normalized_code: str, detected_market: str)
+    """
+    if stock_code is None or not str(stock_code).strip():
+        return False, "股票代码不能为空", "", ""
+
+    raw = str(stock_code).strip()
+    clean_code, det_market, _ = SymbolResolver.resolve(raw, market=market)
+
+    if det_market == 'CN':
+        if not clean_code.isdigit():
+            return False, f"A股代码格式非法: [{raw}] 必须为6位纯数字", clean_code, det_market
+        if len(clean_code) != 6:
+            return False, f"A股代码长度错误: [{raw}] 应为6位数字(当前为{len(clean_code)}位)", clean_code, det_market
+        if not clean_code.startswith(('00', '30', '60', '68', '4', '8', '92')):
+            return False, f"A股代码号段未知: [{raw}] 不是常规沪深北交所股票代码", clean_code, det_market
+        return True, "OK", clean_code, det_market
+
+    elif det_market == 'HK':
+        if not clean_code.isdigit():
+            return False, f"港股代码格式非法: [{raw}] 必须为1~5位数字代码", clean_code, det_market
+        if len(clean_code) > 5 or len(clean_code) == 0:
+            return False, f"港股代码长度错误: [{raw}] 应为1~5位数字", clean_code, det_market
+        return True, "OK", clean_code.zfill(5), det_market
+
+    elif det_market == 'US':
+        clean_check = clean_code.replace('.', '').replace('-', '')
+        if not clean_check.isalpha():
+            return False, f"美股代码格式非法: [{raw}] 必须为英文字母代码（可含一个.或-）", clean_code, det_market
+        if len(clean_check) > 6:
+            return False, f"美股代码过长: [{raw}] 异常长度", clean_code, det_market
+        if clean_code.count('.') > 1:
+            return False, f"美股代码格式非法: [{raw}] 至多含一个小数点分段", clean_code, det_market
+        return True, "OK", clean_code, det_market
+
+    return False, f"未知或不支持的市场类型: [{det_market}]", clean_code, det_market
+
+
 class MarketProfile:
     """
     多市场微观交易规则画像。

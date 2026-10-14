@@ -62,6 +62,8 @@ from run_backtest_kronos_pro import (
     MarketProfile,
     SymbolResolver,
     setup_logger,
+    clear_logs,
+    set_logging_state,
 )
 
 try:
@@ -224,7 +226,9 @@ class BatchBacktester:
                          initial_capital=None, z_threshold=0.70,
                          hard_stop=0.04, trail_stop=0.025, max_hold=15,
                          min_lot_guarantee=True, entry_percentile=0.80,
-                         calib_window=60, risk_per_trade=0.01,
+                         calib_window=60, dynamic_calib=True,
+                         calib_window_min=20, vol_high_thresh=0.40,
+                         vol_low_thresh=0.20, risk_per_trade=0.01,
                          max_position=0.80, intraday_stop=True,
                          require_skill=False, generate_plots=True):
         code = stock_info['stock_code']
@@ -266,80 +270,91 @@ class BatchBacktester:
                 min_down_quantile=min_down_quantile,
             )
 
+        enable_log = kwargs.get('enable_log', True)
+
         # 回测引擎
         bt = KronosBacktesterPro(
             data_dir=data_dir, model_dir=pred_dir,
             initial_capital=cap,
+            enable_log=enable_log,
         )
-        bt.set_market(code, market=market, stock_name=name)
+        try:
+            bt.set_market(code, market=market, stock_name=name, log_dir=stock_out, enable_log=enable_log)
 
-        if hist_df is None or pred_df is None:
-            hist_df, pred_df = bt.load_data(code)
+            if hist_df is None or pred_df is None:
+                hist_df, pred_df = bt.load_data(code)
 
-        signal_df = bt.align_and_generate_signals(
-            hist_df, pred_df, z_score_threshold=z_threshold,
-            forecast_horizon=forecast_horizon,
-            max_auto_horizon=max_auto_horizon,
-            hard_stop_loss=hard_stop,
-            entry_percentile=entry_percentile,
-            calib_window=calib_window,
-        )
+            signal_df = bt.align_and_generate_signals(
+                hist_df, pred_df, z_score_threshold=z_threshold,
+                forecast_horizon=forecast_horizon,
+                max_auto_horizon=max_auto_horizon,
+                hard_stop_loss=hard_stop,
+                entry_percentile=entry_percentile,
+                calib_window=calib_window,
+                dynamic_calib=dynamic_calib,
+                calib_window_min=calib_window_min,
+                vol_high_thresh=vol_high_thresh,
+                vol_low_thresh=vol_low_thresh,
+            )
 
-        skill = bt.evaluate_prediction_skill(signal_df, hard_stop_loss=hard_stop)
-        bt.print_skill_report(skill, code)
-        if require_skill and not skill.get('tradable', False):
-            reason = skill.get('error') or '; '.join(skill.get('不通过原因', []))
-            raise ValueError(f"技能体检拦截: {reason}")
+            skill = bt.evaluate_prediction_skill(signal_df, hard_stop_loss=hard_stop)
+            bt.print_skill_report(skill, code)
+            if require_skill and not skill.get('tradable', False):
+                reason = skill.get('error') or '; '.join(skill.get('不通过原因', []))
+                raise ValueError(f"技能体检拦截: {reason}")
 
-        backtest_df, trades = bt.run_backtest_engine(
-            signal_df, hard_stop_loss=hard_stop,
-            trailing_stop=trail_stop, max_holding_days=max_hold,
-            min_lot_guarantee=min_lot_guarantee,
-            risk_per_trade=risk_per_trade,
-            max_position_pct=max_position, intraday_stop=intraday_stop,
-        )
+            backtest_df, trades = bt.run_backtest_engine(
+                signal_df, hard_stop_loss=hard_stop,
+                trailing_stop=trail_stop, max_holding_days=max_hold,
+                min_lot_guarantee=min_lot_guarantee,
+                risk_per_trade=risk_per_trade,
+                max_position_pct=max_position, intraday_stop=intraday_stop,
+            )
 
-        metrics = bt.evaluate_metrics(backtest_df, trades)
-        metrics['_skill'] = skill
+            metrics = bt.evaluate_metrics(backtest_df, trades)
+            metrics['_skill'] = skill
 
-        # 隔离落盘
-        if trades:
-            pd.DataFrame(trades).to_csv(
-                os.path.join(stock_out, f"{code}_trades.csv"),
-                index=False, encoding='utf-8-sig')
-        backtest_df.to_csv(
-            os.path.join(stock_out, f"{code}_daily_backtest.csv"),
-            encoding='utf-8-sig')
+            # 隔离落盘全套量化分析数据集 (trades, daily_equity, daily_backtest, signals, metrics)
+            bt.export_backtest_artifacts(
+                stock_code=code,
+                output_dir=stock_out,
+                signal_df=signal_df,
+                backtest_df=backtest_df,
+                trades=trades,
+                metrics=metrics,
+                params={
+                    'hard_stop': hard_stop,
+                    'trail_stop': trail_stop,
+                    'max_hold': max_hold,
+                    'min_lot_guarantee': min_lot_guarantee,
+                    'risk_per_trade': risk_per_trade,
+                    'max_position': max_position,
+                    'intraday_stop': intraday_stop,
+                }
+            )
 
-        m_clean = {k: (float(v) if isinstance(v, (np.floating, float, int, np.integer)) else v)
-                   for k, v in metrics.items() if k != '_skill'}
-        m_clean['skill_score'] = skill.get('skill_score', 0.0)
-        m_clean['tradable'] = skill.get('tradable', False)
-        m_clean['market'] = bt.profile.market
-        m_clean['currency'] = bt.profile.currency
-        with open(os.path.join(stock_out, f"{code}_metrics.json"), 'w', encoding='utf-8') as f:
-            json.dump(m_clean, f, ensure_ascii=False, indent=2)
+            if generate_plots:
+                try:
+                    bt.plot_backtest_results(
+                        signal_df, backtest_df, metrics, trades,
+                        code, stock_out, show_plot=False,
+                    )
+                except Exception as e:
+                    print(f"   ⚠️ 图表异常: {e}")
 
-        if generate_plots:
-            try:
-                bt.plot_backtest_results(
-                    signal_df, backtest_df, metrics, trades,
-                    code, stock_out, show_plot=False,
-                )
-            except Exception as e:
-                print(f"   ⚠️ 图表异常: {e}")
+            bt._print_report(code, metrics, trades)
 
-        bt._print_report(code, metrics, trades)
-
-        return {
-            'stock_code': code, 'stock_name': name,
-            'market': bt.profile.market,
-            'currency': bt.profile.currency,
-            'currency_symbol': bt.profile.currency_symbol,
-            'status': 'SUCCESS', 'metrics': metrics,
-            'skill': skill, 'trades_count': len(trades),
-            'stock_out_dir': stock_out,
-        }
+            return {
+                'stock_code': code, 'stock_name': name,
+                'market': bt.profile.market,
+                'currency': bt.profile.currency,
+                'currency_symbol': bt.profile.currency_symbol,
+                'status': 'SUCCESS', 'metrics': metrics,
+                'skill': skill, 'trades_count': len(trades),
+                'stock_out_dir': stock_out,
+            }
+        finally:
+            bt.cleanup_logger()
 
     # ---- 步骤 3: 批量调度 ----
 
@@ -552,6 +567,7 @@ DEFAULT_BATCH_CONFIG = {
     "capital": None, "z_threshold": 0.70,
     "hard_stop": 0.04, "trail_stop": 0.025, "max_hold": 15,
     "min_lot_guarantee": True, "entry_percentile": 0.80, "calib_window": 60,
+    "dynamic_calib": True, "calib_window_min": 20,
     "risk_per_trade": 0.01, "max_position": 0.80,
     "max_workers": 6, "parallel_stocks": 1,
 }
@@ -596,7 +612,12 @@ def cli_main():
     parser.add_argument("--trail-stop", type=float, default=0.025)
     parser.add_argument("--max-hold", type=int, default=15)
     parser.add_argument("--entry-percentile", type=float, default=0.80)
-    parser.add_argument("--calib-window", type=int, default=60)
+    parser.add_argument("--calib-window", type=int, default=60,
+                        help="基准滚动校准窗口，默认 60 交易日")
+    parser.add_argument("--no-dynamic-calib", action="store_true",
+                        help="关闭波动率自适应校准窗口（默认开启）")
+    parser.add_argument("--calib-window-min", type=int, default=20,
+                        help="极端高波动率下校准窗口收缩下限，默认 20 交易日")
     parser.add_argument("--risk-per-trade", type=float, default=0.01)
     parser.add_argument("--max-position", type=float, default=0.80)
     parser.add_argument("--no-min-lot-guarantee", action="store_true",
@@ -618,8 +639,25 @@ def cli_main():
     parser.add_argument("--output-dir", type=str,
                         default=os.path.join(CURRENT_DIR, "batch"),
                         help="回测结果输出目录（默认 backtest/batch）")
+    parser.add_argument("--no-log", action="store_true",
+                        help="关闭本地文件日志落盘（仅控制台输出，不生成 .log 文件）")
+    parser.add_argument("--clear-logs", action="store_true",
+                        help="清空批量回测日志文件并退出")
 
     args = parser.parse_args()
+
+    if args.clear_logs:
+        cleared = clear_logs(log_dir=args.output_dir, clear_all=True)
+        print(f"🧹 已清空批量回测日志 (共 {len(cleared)} 个文件):")
+        for p in cleared:
+            print(f"   - {p}")
+        sys.exit(0)
+
+    if args.no_log:
+        set_logging_state(enabled=True, file_logging=False, log_dir=args.output_dir)
+        print("📝 日志文件落盘已关闭 (--no-log)，仅终端输出控制台信息。")
+    else:
+        set_logging_state(enabled=True, file_logging=True, log_dir=args.output_dir)
 
     # 确定股票池
     pool = []
@@ -680,11 +718,14 @@ def cli_main():
         min_lot_guarantee=not args.no_min_lot_guarantee,
         entry_percentile=args.entry_percentile,
         calib_window=args.calib_window,
+        dynamic_calib=not args.no_dynamic_calib,
+        calib_window_min=args.calib_window_min,
         risk_per_trade=args.risk_per_trade,
         max_position=args.max_position,
         intraday_stop=not args.no_intraday_stop,
         require_skill=args.require_skill,
         generate_plots=not args.no_plots,
+        enable_log=not args.no_log,
     )
 
     engine.generate_ranking_summary(results, args.output_dir)

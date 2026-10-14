@@ -9,7 +9,9 @@
   "temperature": 1.0,
   "top_p": 0.9,
   "min_down_quantile": 0.1,
-  "hist_last_date": "2026-10-02",
+  "particle_filter": false,
+  "pf_val_window": 3,
+  "hist_last_date": "2026-10-09",
   "n_hist": 471,
   "schema_version": 2
 }
