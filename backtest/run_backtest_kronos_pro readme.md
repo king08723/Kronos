@@ -1,10 +1,11 @@
 # Kronos-Pro 量化回测系统完全解析与认知实战手册
 
-> 对应源码：[run_backtest_kronos_pro.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/run_backtest_kronos_pro.py)  
-> 多市场规则支持：[market_rules.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/market_rules.py)  
-> 批量回测调度：[run_backtest_batch.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/run_backtest_batch.py)  
-> 统一看板中枢：[app_backtest_dashboard.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/app_backtest_dashboard.py)  
-> 深度归因研报导出：[generate_strategy_report_pdf.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/generate_strategy_report_pdf.py)
+> 统一调度门面：[run_backtest_kronos_pro.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/run_backtest_kronos_pro.py) (Facade 入口，支持 CLI 与 Streamlit 单标的看板)  
+> 多市场规则内核：[core/market_rules.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/core/market_rules.py) (A股 / 港股 / 美股 全真制度与微观摩擦画像)  
+> 批量回测调度：[run_backtest_batch.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/run_backtest_batch.py) (多标的股票池编排、并发准备与大盘排行榜)  
+> 统一看板中枢：[app_backtest_dashboard.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/app_backtest_dashboard.py) (大盘池化筛选 + 单股穿透深度下钻)  
+> 模块化解耦体系：[core/](file:///Users/jyy/Documents/github_projects/Kronos/backtest/core) · [engine/](file:///Users/jyy/Documents/github_projects/Kronos/backtest/engine) · [strategies/](file:///Users/jyy/Documents/github_projects/Kronos/backtest/strategies) · [execution/](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution) · [data/](file:///Users/jyy/Documents/github_projects/Kronos/backtest/data) · [visualizer/](file:///Users/jyy/Documents/github_projects/Kronos/backtest/visualizer)  
+> 多周期与自定义策略范例：[run_custom_strategy.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/run_custom_strategy.py)
 
 ---
 
@@ -29,11 +30,11 @@
        ↓
 【阶梯 7: 数据闭环】 8. 端到端全链路数据流实战闭环演练 (以 300418 为例的完整数值推导穿透)
        ↓
-【阶梯 8: 成败裁判】 9. 双重评价体系：前置 AI 体检 (12项) + 后置量化绩效严密修正 (17项)
+【阶梯 8: 成败裁判】 9. 双重评价体系：前置 AI 体检 (12项) + 后置量化绩效严密修正 (22项)
        ↓
-【阶梯 9: 工程底座】 10. 工业化推演体系与交付生态 (Walk-Forward、指纹缓存、CLI、Streamlit、研报导出)
+【阶梯 9: 工程底座】 10. 工业化推演体系与交付生态 (Walk-Forward、指纹缓存、CLI、Streamlit、交互图表)
        ↓
-【阶梯 10: 变量总表】 11. 附录：31 项控制参数与 29 项指标端到端数据流向速查字典
+【阶梯 10: 变量总表】 11. 附录：38 项控制参数与 34 项指标端到端数据流向速查字典
        ↓
 【阶梯 11: 架构演进】 12. 港美股多周期与生产级模块化架构演进手册 (V2.0 工业化重构)
 ```
@@ -58,7 +59,7 @@
    - 4.1 蒙特卡洛多路径采样与特征解耦 (期望均值 vs 波峰中位数 vs 保守下探)
    - 4.2 动态去偏机制 (Debias)：消除深度模型的系统性泡沫
    - 4.3 波动率的时界根号缩放 (Square-Root of Time)
-   - 4.4 自适应 Z-Score 信噪比得分与滚动分位数自校准
+   - 4.4 绝对 Z-Score 信息信噪比门槛筛选
    - 4.5 进阶玩法：粒子滤波 (Particle Filtering / 玩法 B)
    - 4.6 模型预测输出数据结构 (`pred_df`)
 5. [守门人机制：九重入场否决矩阵 (9-Stage Risk Veto)](#5-守门人机制九重入场否决矩阵-9-stage-risk-veto)
@@ -82,16 +83,16 @@
 9. [成败裁判：双重评价体系 (Dual Evaluation System)](#9-成败裁判双重评价体系-dual-evaluation-system)
    - 9.1 前置体检：AI 预测能力前置体检字典 (`evaluate_prediction_skill` 12项指标)
    - 9.2 传统量化指标的三大陷阱与 Kronos Pro 严密修正
-   - 9.3 策略量化绩效评价与风险归因字典 (`evaluate_metrics` 17项指标)
+   - 9.3 策略量化绩效评价与风险归因字典 (`evaluate_metrics` 22项指标)
    - 9.4 机构级策略多维综合评级雷达
 10. [工业化推演体系与交付生态 (Engineering & Ecosystem)](#10-工业化推演体系与交付生态-engineering--ecosystem)
     - 10.1 Walk-Forward 滚动前向推演体系与指纹缓存机制
-    - 10.2 常用 CLI 命令行指令全集
+    - 10.2 常用 CLI 命令行指令全集 (含硬件加速与日志治理)
     - 10.3 Streamlit 交互式量化中枢
-    - 10.4 深度研报生成与导出 (`generate_strategy_report_pdf.py`)
+    - 10.4 研报与深度可视化分析体系 (WebUI / Plotly 连续光标 / 静态4联图)
 11. [附录：回测全参数全指标端到端数据流向与变量速查总表](#11-附录回测全参数全指标端到端数据流向与变量速查总表)
-    - 11.1 31 项策略核心控制参数端到端流向总表
-    - 11.2 29 项回测评估指标端到端流向总表
+    - 11.1 38 项策略核心控制参数端到端流向总表
+    - 11.2 34 项回测评估指标端到端流向总表
 12. [港美股多周期与生产级模块化架构演进手册 (V2.0 工业化重构)](#12-港美股多周期与生产级模块化架构演进手册-v20-工业化重构)
     - 12.1 巨石架构拆解与分层解耦全景蓝图 (To-Be)
     - 12.2 港美股为主的高保真交易制度与微观画像
@@ -118,7 +119,7 @@
 ```
 
 ### 1.2 最小可行回测原型 (30行代码)
-理解整个 4000 行工业级脚本的第一步，是看懂它的极简数学骨架：
+理解整个回测系统（由统一调度门面 `run_backtest_kronos_pro.py` 与解耦内核组件协同驱动）的第一步，是看懂它的极简数学骨架：
 
 ```python
 import pandas as pd
@@ -172,7 +173,7 @@ def minimal_backtest(df: pd.DataFrame, initial_cash: float = 100000.0):
 ## 2. 真实世界的物理约束与微观摩擦建模
 
 ### 2.1 交易所微观规则画像 (`MarketProfile`)
-在二级市场中，不同国家与交易所的交易规则存在巨大物理差异。回测引擎通过 [market_rules.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/market_rules.py) 中的 `MarketProfile` 抽象出微观环境画像：
+在二级市场中，不同国家与交易所的交易规则存在巨大物理差异。回测引擎通过 [core/market_rules.py](file:///Users/jyy/Documents/github_projects/Kronos/backtest/core/market_rules.py) 中的 `MarketProfile` 抽象出微观环境画像：
 
 - **A 股 (`CN`)**：
   - **整手申报限制 (`lot_size = 100`)**：买入数量必须为 100 股的整数倍，零股无法买入；
@@ -292,7 +293,7 @@ t   日 09:30 开盘
 ```
 
 ### 3.4 原始历史行情数据结构 (`hist_df`)
-历史行情数据是整个回测系统的数据源基石，通过 `KronosDataFetcher.fetch_history()` 获取并标准化：
+历史行情数据是整个回测系统的数据源基石，通过 `KronosDataFetcher.fetch_history()` 获取并标准化。存储架构采用目录解耦机制：优先自动收敛至独立解耦目录 `backtest/historical_data/`，并向下完全兼容 `backtest/data/`：
 
 | 字段名称 | 代码列名 | 数据类型 | 所属阶段 | 控制参数 | 计算方式 / 代码实现 | 业务含义与金融逻辑 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -311,7 +312,7 @@ t   日 09:30 开盘
 ### 4.1 蒙特卡洛多路径采样与特征解耦
 Kronos 深度时序模型不是输出一个单一的明天涨跌预测，而是对未来 `eval_horizon` 个交易日推演生成形状为 `(sample_count=20, pred_len=10)` 的**蒙特卡洛多路径价格走势矩阵**。
 
-在提取统计特征时，[_summarize_paths](file:///Users/jyy/Documents/github_projects/Kronos/backtest/run_backtest_kronos_pro.py#L340-L467) 实现了关键的**特征解耦原则**：
+在提取统计特征时，[KronosPredictorPipeline._summarize_paths](file:///Users/jyy/Documents/github_projects/Kronos/backtest/data/kronos_predictor.py#L171-L248) 实现了关键的**特征解耦原则**：
 
 1. **入场期望基准 (`pred_expected` / `pred_close`)**：
    - **算法**：持有至动态最优时界 (`optimal_horizon`) 当天的跨路径加权期望收盘价（即 `mean_path[target_idx]`，其中 `target_idx = optimal_horizon - 1`）。在固定时界模式下自动对齐第 `eval_horizon` 天的期望收盘价。
@@ -379,8 +380,13 @@ err = df['expected_return'] - (df['close'] - df['close_prev']) / df['close_prev'
 bias = err.shift(1).rolling(calib_window=60, min_periods=15).median()
 df['pred_bias'] = bias.fillna(0.0)
 
-# 3. 去偏后的净有效预期收益率
-df['expected_return_adj'] = df['expected_return'] - df['pred_bias']
+# 3. 反转感知自适应去偏 (Reversal-Aware De-biasing)
+# 顺势行情严格扣减系统性泡沫；而在底部/顶部反转时，阻断滞后历史偏差对反转 Alpha 的误杀
+# reversal_mask: 下跌背景且预测向上反转 (is_bull_reversal & pred_bias > 0)
+#                或上涨背景且预测向下拐头 (is_bear_reversal & pred_bias < 0)
+bias_weight = np.where(reversal_mask, reversal_debias_weight, 1.0)
+df['pred_bias_effective'] = df['pred_bias'] * bias_weight
+df['expected_return_adj'] = df['expected_return'] - df['pred_bias_effective']
 ```
 
 ### 4.3 波动率的时界根号缩放 (Square-Root of Time)
@@ -391,31 +397,36 @@ df['expected_return_adj'] = df['expected_return'] - df['pred_bias']
 ```
 持有期越长，标的固有的累积随机漫步噪音就越大，必须要求更高的预期回报才能配得上相应的时间风险。
 
-### 4.4 自适应 Z-Score 信噪比得分与滚动分位数自校准
+### 4.4 绝对 Z-Score 信息信噪比门槛筛选
 将去偏净预期收益与时界扩展波动率相除，得到无量纲的**信息信噪比得分 (Z-Score)**：
 ```text
 signal_score = expected_return_adj / volatility_scaled
 ```
-不同标的在不同行情阶段的波动率结构迥异，静态固定阈值（如固定 0.7）无法穿越牛熊。系统采用**滚动分位数自校准 (Quantile Calibration)**：
+`signal_score` 已经通过双重标准化消除了标的横向个体波动率与纵向持仓时界差异，其本身就是一个严格的统计信噪比指标。系统采用**绝对信噪比门槛筛选 (`z_score_threshold`)**，彻底消除了滚动分位数在弱市“矮子拔将军”和强市“良机被限流”的缺陷，且无 60 天预热期要求：
 ```python
-# 计算该标的过去 60 个交易日自身 signal_score 的 80% 分位门槛
-roll = df['signal_score'].shift(1).rolling(calib_window=60, min_periods=15)
-df['entry_threshold'] = roll.quantile(entry_percentile=0.80)
+# 绝对信噪比门槛：净预期回报必须达到该时界随机漫步噪音标准差的 0.70 倍以上
+base_thresh = 0.70
+if particle_filter and 'pf_confidence' in df.columns:
+    # 粒子滤波安全边际调控：置信度低于 0.6 时动态上浮门槛
+    pf_entry_penalty = np.where(df['pf_confidence'] < 0.6, (0.6 - df['pf_confidence']) * 0.4, 0.0)
+    df['entry_threshold'] = base_thresh + pf_entry_penalty
+else:
+    df['entry_threshold'] = base_thresh
 
-# 只有进入自身近期前 20% 的强信号区间，才允许进入买入候选池
+# 只要绝对信噪比达标，即可取得买入候选资格
 candidate_buy = df['signal_score'] > df['entry_threshold']
 ```
 
 #### 💡 数值推演示例：从 AI 预测到买入候选资格（4.2 至 4.4 全链路数值穿透）
-承接 4.1 节得出的解耦输出指标：已知收盘基准 `prev_real_close = 100.00 元`，入场期望价 `pred_close = 103.00 元`，动态最优时界 `target_horizon = 2 天`。以下演练其如何依次穿越去偏修正、时界波动率扩展、Z-Score 计算并完成滚动分位数自校准决策：
+承接 4.1 节得出的解耦输出指标：已知收盘基准 `prev_real_close = 100.00 元`，入场期望价 `pred_close = 103.00 元`，动态最优时界 `target_horizon = 2 天`。以下演练其如何依次穿越去偏修正、时界波动率扩展、Z-Score 计算并完成绝对信噪比门槛决策：
 
 | 流水线阶段 | 计算公式 / 输入变量 | 关键数值取值 | 输出结果与业务解读 |
 | :--- | :--- | :---: | :--- |
 | **第 1 步：原始收益率** | `(pred_close - close_prev) / close_prev` | `(103.00 - 100.00) / 100.00` | **+3.00%**（模型给出的原始多头期望空间） |
-| **第 2 步：动态去偏修正 (4.2)** | `expected_return - pred_bias`<br>*(过去60日预测误差中位数 bias = +0.60%)* | `+3.00% - (+0.60%)` | **+2.40%**（剔除模型盲目乐观泡沫后的净有效预期回报） |
+| **第 2 步：动态去偏修正 (4.2)** | `expected_return - pred_bias`<br>*(顺势去偏偏差 bias = +0.60%；反转态阻断扣减)* | `+3.00% - (+0.60%)` | **+2.40%**（剔除模型盲目乐观泡沫后的净有效预期回报） |
 | **第 3 步：波动率时界缩放 (4.3)** | `vol_scale = sqrt(target_horizon)`<br>`volatility_scaled = vol_14d * vol_scale` | `vol_14d = 1.80%`<br>`sqrt(2) ≈ 1.414` | **2.55%**（时界扩展波动率，2 天累计随机漫步噪音扩增 1.414 倍） |
 | **第 4 步：信息信噪比得分 (4.4)** | `signal_score = expected_return_adj / volatility_scaled` | `+2.40% / 2.55%` | **+0.943**（无量纲 Z-Score 得分，预期净回报达噪音的 0.943 倍） |
-| **第 5 步：滚动分位自校准 (4.4)** | `candidate_buy = signal_score > entry_threshold`<br>*(近60日自身的80%分位 entry_threshold = 0.820)* | `0.943 > 0.820` | **通过 (PASS)** 信号进入近60天前20%强信号区，取得买入候选资格！ |
+| **第 5 步：绝对信噪比审查 (4.4)** | `candidate_buy = signal_score > entry_threshold`<br>*(基准门槛 entry_threshold = 0.700)* | `0.943 > 0.700` | **通过 (PASS)** 净预期回报达到噪音的 0.943 倍，超过 0.70 红线，取得买入候选资格！ |
 
 **风控对比警示：若缺少去偏或时界缩放会发生什么？**
 - **若漏掉 4.2 去偏机制**：将直接使用虚高的 `+3.00%` 计算信噪比，得到 `signal_score = 3.00% / 2.55% = 1.176`。系统会误把大模型近期积累的单边牛市系统性乐观泡沫当成高确定性 alpha，在市场见顶拐点盲目追高。
@@ -424,16 +435,16 @@ candidate_buy = df['signal_score'] > df['entry_threshold']
 ### 4.4.1 波动率自适应校准窗口 (Volatility-Adaptive Calibration Window)
 
 #### 1. 痛点洞察：固定 60 天窗口在高波动率阶段的“均值钝化与滞后滞胀”
-在量化时序模型中，校准窗口 `calib_window` 担负着三大统计任务：
-1. **预测误差去偏 (Debias)**：统计近期预测误差的中位数偏置；
-2. **粒子滤波跟踪误差基准**：评估大模型预测路径的发散程度；
-3. **滚动分位数入场门槛 (Quantile Calibration)**：计算近期信噪比分布的 80% 动态门槛。
+在量化时序模型中，校准窗口 `calib_window` 担负着核心统计任务：
+1. **预测误差动态去偏 (Debias)**：统计近期预测误差的中位数偏置；
+2. **粒子滤波跟踪误差基线**：评估大模型预测路径在不同市场状态下的跟踪精度与发散度；
+3. **动态波动率环境自适应**：在波动率剧变时自适应收缩统计窗口，避免旧样本钝化。
 
 在平稳震荡期（年化波动率 <= 20%），数据生成过程较为稳定，60 个交易日（约 3 个自然月）可提供充足样本，滤除单日随机特异性噪音。
 然而，一旦市场遭遇**极端高波动或黑天鹅阶段**（如年化波动率 > 40%）：
 - **时序结构突变 (Regime Shift)**：过去 60 天中较早的平稳期样本波动幅度极窄，稀释了当前高波动现实；
 - **去偏中位数严重滞后**：固定 60 天中位数无法迅速感知模型近期放大的系统性偏差；
-- **入场门槛钝化失真**：门槛仍被数十天前的平静期数据压低，极易导致高波环境下的误触发。
+- **统计基线失真**：平静期旧样本权重过重，无法灵敏反映高波状态下的真实预测偏置。
 
 #### 2. 波动率动态窗口映射算法 (Volatility-Adaptive Window Formula)
 为彻底解决滞后问题，Kronos Pro 加入基于真实年化波动率的自适应动态窗口机制。系统严格保证所有输入变量截至 t-1 收盘已确认，严格杜绝未来函数偷价：
@@ -563,9 +574,9 @@ pf_confidence = clip(ESS / n_samples, 0.1, 1.0)
 候选信号必须按严格顺序逐级通过九重风控审查：
 
 ```text
-[候选条件] signal_score > entry_threshold (处于前 20% 强信号)
+[候选条件] signal_score > entry_threshold (信噪比达标)
     ↓
-[审查 ①] 滚动 80% 分位门槛审查          (否决原因: 信号强度未进入滚动分位阈值)
+[审查 ①] 绝对信噪比门槛审查          (否决原因: 信噪比未达标(signal_score<=threshold))
     ↓
 [审查 ②] 粒子不确定性加罚审查            (门槛自适应上浮惩罚)
     ↓
@@ -590,7 +601,7 @@ pf_confidence = clip(ESS / n_samples, 0.1, 1.0)
 
 | 审查层级 | 审查规则名称 | 核心输入指标 | 控制参数与门槛 | 判定条件 (代码逻辑) | 通过样例 (PASS) | 否决样例 (FAIL) | 系统记录 veto_reason 归因 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Stage 5-1** | 滚动分位门槛 | `signal_score` | `--entry-percentile (0.80)` | `signal_score > entry_threshold` | `+0.711 > 0.650` (通过) | `+0.420 <= 0.650` (否决) | `'信号强度未进入滚动分位阈值'` |
+| **Stage 5-1** | 绝对信噪比门槛 | `signal_score` | `--z-threshold (0.70)` | `signal_score > entry_threshold` | `+0.711 > 0.700` (通过) | `+0.420 <= 0.700` (否决) | `'信噪比未达标(signal_score<=threshold)'` |
 | **Stage 5-2** | 粒子不确定性加罚| `pf_confidence` | 0.60 警戒线 | `pf_penalty = max(0, 0.6 - pf) * 0.4` | `pf=0.76` (无加罚) | `pf=0.45` (加罚+0.060, 门槛抬升) | 抬高门槛导致间接否决 |
 | **Stage 5-3** | 预测路径大趋势 | `pred_slope` | 0.0 (水平基准) | `pred_slope > 0` | `+0.025 > 0` (多头向上) | `-0.012 <= 0` (下行阴跌通道) | `'预测斜率向下'` |
 | **Stage 5-4** | T+N 波峰兑现 | `target_horizon` | `settlement_days (T+1)` | `target_horizon > settlement_days` | `H=3 > 1` (第3天波峰可卖) | `H=1 <= 1` (明天见顶T+1锁仓无法卖) | `'预测波峰时界<=1日(T+1无法波峰离场)'` |
@@ -601,7 +612,7 @@ pf_confidence = clip(ESS / n_samples, 0.1, 1.0)
 | **Stage 5-9** | 开盘涨停流动性 | `open_limit_up` | `--market (涨跌幅)` | `open_limit_up == 0` | `open < 涨停价` (通过) | `open == 涨停价` (封死一字涨停) | `'开盘封涨停无法买入'` |
 
 ### 5.4 信号对齐矩阵数据结构 (`signal_df`)
-由 `align_and_generate_signals()` 计算产出，驱动下游撮合状态机：
+由 [KronosStrategy.align_and_generate_signals()](file:///Users/jyy/Documents/github_projects/Kronos/backtest/strategies/kronos_strategy.py#L97)（通过 `BacktestEngine` 统一调度代理）计算产出，驱动下游撮合状态机：
 
 | 字段名称 | 代码列名 | 数据类型 | 所属阶段 | 控制参数 | 计算方式 / 代码实现 | 业务含义与金融逻辑 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -612,13 +623,13 @@ pf_confidence = clip(ESS / n_samples, 0.1, 1.0)
 | **短期均线** | `ma_fast` | `float` | Stage 1, 5 | 无 | `close.rolling(20).mean().shift(1)` | **短期均线**：截至 t-1 的 20 日均线 |
 | **中长期均线** | `ma_slow` | `float` | Stage 1, 5 | 无 | `close.rolling(60).mean().shift(1)` | **中长期均线**：截至 t-1 的 60 日均线生命线 |
 | **原始预期收益** | `expected_return` | `float` | Stage 4 | 无 | `(pred_close - close_prev) / close_prev` | **原始预期收益**：模型预测价相对昨收涨幅 |
-| **滚动预测偏差** | `pred_bias` | `float` | Stage 4 | `--calib-window` | `(expected_return - realized).shift(1).rolling(60).median()` | **滚动预测偏差**：过去 60 天误差中位数 |
-| **去偏预期收益** | `expected_return_adj`| `float` | Stage 4, 5 | `debias` | `expected_return - pred_bias` | **去偏后预期收益**：扣除系统性泡沫后的净预期回报 |
+| **滚动预测偏差** | `pred_bias` | `float` | Stage 4 | `--calib-window` | `(expected_return - realized).shift(1).rolling(60).median()` | **滚动预测偏差**：过去 60 天误差中位数基线 |
+| **去偏预期收益** | `expected_return_adj`| `float` | Stage 4, 5 | `debias` | 反转感知自适应去偏：顺势扣减偏置，反转形态阻断扣减 | **去偏净预期收益**：扣除系统性泡沫后的净预期回报 |
 | **目标持仓天数** | `target_horizon` | `int` | Stage 4, 6, 7 | 无 | `optimal_horizon.clip(1, 20)` | **目标持仓天数**：预期波峰出现的时钟天数 |
 | **时界扩展波动率**| `volatility_scaled`| `float` | Stage 4 | 无 | `vol_14d * sqrt(target_horizon)` | **持有期波动率**：时间根号法则扩展的持有期累积噪音 |
 | **Z-Score 信号强度**| `signal_score` | `float` | Stage 4, 5 | 无 | `expected_return_adj / volatility_scaled` | **自适应信号强度**：信噪比得分，衡量交易性价比 |
 | **粒子滤波置信度**| `pf_confidence` | `float` | Stage 4, 5 | `--particle-filter` | 继承自预测表或滚动计算 | **粒子滤波置信度**：衡量该决策点上模型路径的可信度 |
-| **动态入场门槛** | `entry_threshold`| `float` | Stage 4, 5 | `--entry-percentile` | `rolling_80_quantile + pf_penalty` | **动态入场门槛**：近期 80% 分位线 + 粒子罚分 |
+| **入场门槛** | `entry_threshold`| `float` | Stage 4, 5 | `--z-threshold` | `z_score_threshold + pf_penalty` | **绝对入场门槛**：基准门槛 (默认 0.70) + 粒子滤波加罚 |
 | **下探仓位系数** | `position_scale` | `float` | Stage 5, 6 | `--hard-stop` | `down_scale * pf_confidence.clip(0.2, 1.0)` | **仓位调节系数**：下探深度与置信度双重仓位缩放乘数 |
 | **理论决策信号** | `raw_signal` | `int (0/1)` | Stage 5 | 无 | 综合通过门槛、粒子滤波与否决矩阵为 1，否则 0 | **理论决策信号**：t-1 收盘计算出的买入决策 |
 | **实际执行信号** | `exec_signal` | `int (0/1)` | Stage 5, 6 | 无 | 直接继承 `raw_signal`（严格 lag=0 防偷价） | **实际执行信号**：t 日开盘用于撮合的买入指令 |
@@ -696,7 +707,7 @@ shares_to_buy = profile.round_shares(allowed_shares)
 1. **高单价一手保底机制 (`min_lot_guarantee`)**：  
    对于高单价股票（如腾讯控股 `00700`，市价 400 港元/股，法定 1 手 = 100 股 = 40,000 港元；贵州茅台 `600519`，市价 1500 元/股，1 手 = 150,000 元）：  
    若账户本金 100,000 港元，严格按 1% 风险预算反推股数可能仅为 62 股，经 100 股整手向下截断后变为 0 股，导致策略永远无法建仓。  
-   系统内置**一手保底机制**：
+   系统在 [RiskBudgetSizer.calculate_shares](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/sizer.py#L94-L106) 中内置**一手保底机制**：
    ```python
    if shares_to_buy < profile.lot_size and min_lot_guarantee:
        one_lot_cost = profile.lot_size * buy_price
@@ -821,7 +832,7 @@ graph TD
   - 单标的仓位上限：`max_position = 0.80`（80%）
   - 基准硬止损线：`hard_stop_loss = 0.04`（4.0%）
   - 移动止盈回撤：`trailing_stop = 0.025`（2.5%），启动门槛 `trailing_stop_min_profit = 0.02`（2.0%）
-  - 滚动校准窗口：基准 `calib_window = 60` 天，默认开启波动率自适应（`dynamic_calib = True`，高波极端期收缩至 `calib_window_min = 20` 天），入场分位 `entry_percentile = 0.80`
+  - 滚动校准窗口：基准 `calib_window = 60` 天，默认开启波动率自适应（`dynamic_calib = True`，高波极端期收缩至 `calib_window_min = 20` 天），反转感知自适应去偏（`reversal_aware_debias = True`），绝对信噪比门槛 `z_score_threshold = 0.70`
   - 波动率与 ATR 窗口：`volatility_window = 14` 天，`atr_window = 14` 天
 
 ---
@@ -890,9 +901,9 @@ graph TD
   expected_return = (pred_close - close_prev) / close_prev
                   = (28.920 - 28.100) / 28.100 = +0.02918 (+2.92%)
   ```
-- **2. 滚动 60 日预测偏差去偏 (Debias)**：
+- **2. 反转感知自适应去偏 (Debias)**：
   - 系统统计过去 60 日模型预测与真实收益的误差中位数 `pred_bias = +0.0027` (+0.27%，说明模型近期微幅高估)；
-  - **去偏后净预期收益率**：
+  - 形态判定：当前属于双均线金叉顺势多头环境，非超跌/见顶反转形态，正常执行系统性偏置扣减：
     ```text
     expected_return_adj = expected_return - pred_bias
                         = +0.02918 - (+0.00270) = +0.02648 (+2.65%)
@@ -909,16 +920,16 @@ graph TD
   signal_score = expected_return_adj / volatility_scaled
                = +0.02648 / 0.03724 = +0.711 (信噪比得分)
   ```
-- **5. 动态入场门槛与粒子加罚**：
-  - 过去 60 天 `signal_score` 的 80% 分位阈值：`rolling_80_quantile = 0.650`；
+- **5. 绝对信噪比入场门槛与粒子加罚**：
+  - 系统设定绝对信噪比门槛：`base_thresh = 0.70`；
   - 粒子置信度 `pf_confidence = 0.760 >= 0.60`，因此不确定性加罚 `pf_entry_penalty = 0.0`；
-  - **最终入场门槛**：`entry_threshold = 0.650`。
+  - **最终入场门槛**：`entry_threshold = base_thresh + pf_entry_penalty = 0.700`。
 
 ---
 
 #### 步骤 5：九重风控审查流水线 (Stage 5)
 系统对 `signal_score = +0.711` 展开逐项审查：
-1. **审查 ① 门槛审查**：`0.711 > 0.650`（通过：超越自身 80% 强动量信号门槛）
+1. **审查 ① 绝对信噪比门槛审查**：`0.711 > 0.700`（通过：超越绝对信噪比门槛 0.70）
 2. **审查 ② 粒子不确定性**：`pf_confidence = 0.76 >= 0.60`（通过：拟合稳定）
 3. **审查 ③ 路径动量斜率**：`pred_slope = +0.025 > 0`（通过：总体预期向上）
 4. **审查 ④ T+N 波峰兑现**：`target_horizon = 3 > 1`（通过：A股 T+1 下第 3 天波峰可卖出兑现）
@@ -1112,6 +1123,11 @@ flowchart LR
 | **`daily_volatility`** | **策略日频收益波动率**<br/>每日策略净值收益率的标准差 | `std(daily_ret)` | 稳健型: `< 1.0%`<br/>进攻型: `1.0% ~ 2.0%` | `1.15%` | 日常净值波动的微观度量 |
 | **`annual_volatility`** | **策略年化波动率**<br/>按 252 交易日换算的年化标准差 | `daily_volatility * sqrt(252)` | 稳健型: `< 15%`<br/>平衡型: `15% ~ 25%`<br/>激进型: `> 25%` | `18.25%` | 投资组合风险预算的核心输入 |
 | **`turnover_rate`** | **资金单边换手率**<br/>全周期买入成交总额占平均资金规模的比例 | `sum(buy_trade_cash) / avg_nav` | 短线策略合理区间: `3.0 ~ 8.0 倍` | `4.6 倍` | 监控交易摩擦磨损与交易频繁程度 |
+| **`avg_mfe`** | **平均最大潜在盈利 (Avg MFE)**<br/>持仓期间价格达到的最大浮盈幅度均值 | `mean([t.mfe_pct for t in trades])` | 卓越: `> 6.0%`<br/>良好: `> 3.5%` | `+5.12%` | 评估多头波段脉冲空间与止盈充分性，诊断是否卖得过早 |
+| **`avg_mae`** | **平均最大潜在逆行 (Avg MAE)**<br/>持仓期间价格经历的最大浮亏幅度均值 | `mean([t.mae_pct for t in trades])` | 稳健: `< -2.5%`<br/>警示: `< -5.0%` | `-2.18%` | 评估持仓承受逆风下探程度，衡量止损线设置是否过紧或过宽 |
+| **`exposure`** | **时间暴露/持仓在市占比**<br/>账户处于持仓状态的 Bar 数量占总样本比例 | `count(shares > 0) / total_bars` | 短线择时: `20% ~ 50%` | `32.5%` | 衡量资金在险时间，低在市占比+高Alpha代表极高资金使用效率 |
+| **`stat_reliable`** | **统计有效性达标标志**<br/>有效已平仓样本笔数是否达到大数法则基准 | `total_trades >= 20` | `True` / `False` | `False` (12笔需扩充) | 警示极少量样本带来的幸存者偏差，防范虚假高胜率 |
+| **`forced_exits`** | **期末强平笔数**<br/>由于回测期满尚未触发策略出场而强制结算的笔数 | `count(reason == '回测结束强平')` | 越少越好 (<= 1笔) | `0 笔` | 监控边界效应，防止依靠期末未平仓浮盈虚增收益 |
 
 ---
 
@@ -1160,65 +1176,85 @@ Walk-Forward 模拟了真实的实盘迭代过程：
 ```
 当参数未变动时秒级复用本地缓存；加上 `--force-refresh` 参数时则强制重新推演。
 
-### 10.2 常用 CLI 命令行指令全集
+### 10.2 常用 CLI 命令行指令全集 (含硬件加速与日志治理)
 
 ```bash
 # 1. 推荐：一键自动拉取数据 + 滚动预测 + 执行回测 (默认使用纯蒙特卡洛)
 python backtest/run_backtest_kronos_pro.py 300418 --auto
 
-# 2. 启用粒子滤波 (玩法B：动态重分配权重 + 不确定性调控 + 验证窗口 3 天)
+# 2. 硬件加速：针对 Mac 苹果芯片启用 MPS 金属加速推演 (或指定 cuda / cpu)
+python backtest/run_backtest_kronos_pro.py 300418 --auto --device mps
+
+# 3. 启用粒子滤波 (玩法B：动态重分配权重 + 不确定性调控 + 验证窗口 3 天)
 python backtest/run_backtest_kronos_pro.py 600036 --auto --particle-filter --pf-window 3 --pf-threshold 0.35
 
-# 3. 港股与美股标的回测（自动匹配市场规则）
+# 4. 港股与美股标的回测（自动匹配市场规则与一手保底）
 python backtest/run_backtest_kronos_pro.py 00700 --auto
 python backtest/run_backtest_kronos_pro.py AAPL --auto
 
-# 4. 自定义风控参数：硬止损 5%，移动止盈 3%，最大持仓 8 天
+# 5. 自定义风控参数：硬止损 5%，移动止盈 3%，最大持仓 8 天
 python backtest/run_backtest_kronos_pro.py 300418 --hard-stop 0.05 --trail-stop 0.03 --max-hold 8
 
-# 5. 开启技能准入强拦截（体检不合格直接报错中止）
+# 6. 开启技能准入强拦截（体检不合格直接报错中止）
 python backtest/run_backtest_kronos_pro.py 300418 --auto --require-skill
 
-# 6. 波动率自适应窗口配置（高波下限设为25天，或关闭自适应回归固定60天）
+# 7. 波动率自适应窗口配置（高波下限设为25天，或关闭自适应回归固定60天）
 python backtest/run_backtest_kronos_pro.py TSLA --auto --calib-window-min 25
 python backtest/run_backtest_kronos_pro.py TSLA --auto --no-dynamic-calib
 
-# 7. 股票池批量回测调度
+# 8. 日志治理与历史清理
+# 清理指定标的历史回测日志
+python backtest/run_backtest_kronos_pro.py 300418 --clear-log
+# 一键清理 output 目录下所有日志文件
+python backtest/run_backtest_kronos_pro.py --clear-all-logs
+# 静默运行（关闭本地 .log 文件落盘，仅终端控制台打印）
+python backtest/run_backtest_kronos_pro.py 300418 --auto --no-log
+
+# 9. 股票池批量自动化回测调度
 python backtest/run_backtest_batch.py --auto --stock-file backtest/my_stocks.csv
 
-# 8. 导出策略深度解析与归因研报 (生成 A4 排版 HTML 与 PDF)
-python backtest/generate_strategy_report_pdf.py
+# 10. 多周期 (15m/30m/1d) 与自定义量化策略回测
+python backtest/run_custom_strategy.py AAPL --market US --timeframe 1d
+python backtest/run_custom_strategy.py TSLA --market US --timeframe 15m
 ```
 
 ### 10.3 Streamlit 交互式量化中枢
 运行命令拉起可视化面板：
 ```bash
+# 单标的深度穿透回测看板
 streamlit run backtest/run_backtest_kronos_pro.py
-# 或统一量化研发看板
+# 统一量化投研大盘（池化筛选 + 单股穿透深度下钻）
 streamlit run backtest/app_backtest_dashboard.py
 ```
 - **K 线与净值图连续十字光标吸附**：注入底层 JavaScript 脚本，打通 Plotly 多子图之间的时间轴光标同步；
-- **逐笔交易买卖点标记与归因**：悬停即查平仓归因（硬止损、移动止盈、动量跃迁）；
+- **逐笔交易买卖点标记与归因**：悬停即查平仓归因（硬止损、移动止盈、动量跃迁、MFE/MAE）；
 - **参数即时热重载**：侧边栏支持动态拖动滑块调整止损点、滑点、佣金，秒级响应刷新。
 
-### 10.4 深度研报生成与导出 (`generate_strategy_report_pdf.py`)
-- **执行命令**：`python backtest/generate_strategy_report_pdf.py`
-- **产出文件**：
-  - `backtest/Kronos_Quant_Strategy_Deep_Dive_Report.html` (交互式高精研报)
-  - `backtest/Kronos_Quant_Strategy_Deep_Dive_Report.pdf` (可直接打印的标准研报)
+### 10.4 研报与深度可视化分析体系 (Visualizer & Reporting)
+- **多轴联动高精交互图表**：由 [Plotly 交互引擎](file:///Users/jyy/Documents/github_projects/Kronos/backtest/visualizer/plot_interactive.py) 生成，打通 K 线走势、信号点位、账户净值与回撤曲线。
+- **出版级 Matplotlib 静态 4 联图**：由 [StaticVisualizer](file:///Users/jyy/Documents/github_projects/Kronos/backtest/visualizer/plot_static.py) 自动生成，输出至 `backtest/output/{code}_backtest_pro.png` 与 `backtest/batch/{code}/`：
+  - 子图 1：主图 K 线 + 均线系统 + 逐笔买入卖出与止损标注
+  - 子图 2：AI 预测期望路径、置信分位包络带与跟踪误差
+  - 子图 3：策略净值对比基准买入持有累积收益曲线
+  - 子图 4：动态水下回撤 (Drawdown Depth) 风险监控
+- **完整结构化数据与指标流水输出**：
+  - `{code}_metrics.json`：全套 22 项量化绩效与风险归因指标字典
+  - `{code}_daily_backtest.csv`：逐日/逐Bar资产盯市与持仓明细
+  - `{code}_trades.csv`：逐笔交易台账（含 MFE/MAE、交易规费、真实现金净盈亏）
+  - `{code}_signals.csv`：信号矩阵与九重风控审查拦截归因
 
 ---
 
 ## 11. 附录：回测全参数全指标端到端数据流向与变量速查总表
 
-### 11.1 31 项策略核心控制参数端到端流向总表
+### 11.1 38 项策略核心控制参数端到端流向总表
 
 | 序号 | 参数名称 | CLI 命令选项 | 对应代码变量 | 所属阶段 | 作用的数据结构与字段 | 对下游阶段的影响 | 默认值 | 实盘调优建议与工程机理 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 1 | 标的代码 | `code` (位置参数) | `args.code` | Stage 0 环境初始化 | 全局标的标识符，路由 `MarketProfile` | 决定印花税、佣金、涨跌幅限制与最小交易手 | 无 (必选) | 如 `300418` (创业板 20%)、`600036` (主板 10%) |
 | 2 | 回测总交易日数 | `--test-days` | `args.test_days` | Stage 0 环境初始化 | 截取 `hist_df` 尾部用于回测的行数 | 决定回测样本窗口跨度与推演循环次数 | `120` | 建议 `>= 120` 交易日以满足统计显著性与年化外推条件 |
 | 3 | 历史回看K线长度 | `--lookback` | `args.lookback` | Stage 0 环境初始化 | 送入 Kronos 模型的上下文窗口长度 | 影响特征提取覆盖度与显存消耗 | `120` | 对应约半年行情，保留完整中期形态 |
-| 4 | 预测未来跨度 | `--forecast-horizon` | `args.forecast_horizon`| Stage 1 预测生成 | 模型自回归预测的未来天数；支持整数或 `auto` | 决定 `pred_df` 长度及自适应寻优边界 | `'auto'` | 推荐 `'auto'`，自适应锁定最优预期时界 |
+| 4 | 预测未来跨度 | `--horizon` | `args.horizon` | Stage 1 预测生成 | 模型自回归预测的未来天数；支持整数或 `auto` | 决定 `pred_df` 长度及自适应寻优边界 | `'auto'` | 推荐 `'auto'`，自适应锁定最优预期时界 |
 | 5 | 最大自适应时界 | `--max-auto-horizon` | `args.max_auto_horizon`| Stage 1 预测生成 | 限制自适应寻优搜寻的最大天数上限 | 截断 `pred_df` 远期不可信预测，约束持有周期 | `10` | 短线策略设定为 `8 ~ 10` 天，防过度推演长周期虚假趋势 |
 | 6 | 步进滑动步长 | `--step-size` | `args.step_size` | Stage 1 预测生成 | Walk-Forward 滚动推演滑动步长 | `1` 为逐日严密推演；`2` 则跳步插值节约一半推演耗时 | `1` | 生产环境推荐 `1`；快速粗筛可用 `2` |
 | 7 | 蒙特卡洛采样路径数 | `--sample-count` | `args.sample_count` | Stage 1 预测生成 | Kronos 模型多路径采样总数 `N` | 决定粒子滤波粒子数及分位数估计稳定性 | `20` | 显存充裕时设为 `30 ~ 50`，估计更平滑 |
@@ -1231,8 +1267,8 @@ streamlit run backtest/app_backtest_dashboard.py
 | 14 | 历史波动率回看窗口 | 超参常量 | `HIST_VOL_WINDOW` | Stage 3 特征与信号 | 计算滚动收益率标准差 `vol_14d` 的窗口 | 影响时界根号缩放波动率与 Z-Score | `14` | 短线波动率经典基准，灵敏捕捉近期市场活跃度 |
 | 15 | 偏度安全系数 | 超参常量 | `SKEW_SAFETY_MULT` | Stage 3 特征与信号 | 对预期收益率进行动态去偏的扣减乘数 | 调降高估偏度：`pred_ret - 0.5 * skew * vol` | `0.5` | 防止模型生成右偏肥尾带来的虚高收益幻觉 |
 | 16 | Z-Score 信号阈值 | 超参常量 | `ZSCORE_BUY_THRESH` | Stage 3 特征与信号 | 触发多头候选买入信号的 Z-Score 绝对门槛 | 产出 `pred_zscore >= 0.5` 的多头预备信号 | `0.5` | 过滤白噪声；要求预期收益至少显著高于 0.5 倍波动率 |
-| 17 | 滚动分位数自适应窗口 | 超参常量 | `QUANTILE_WINDOW` | Stage 3 特征与信号 | 历史 Z-Score 滚动分位数的计算天数窗口 | 计算 60 日滚动 80% 分位数，实现自适应动态阈值 | `60` | 适配不同市场周期环境下的相对强弱判定 |
-| 18 | 滚动分位数目标分位 | 超参常量 | `TARGET_QUANTILE` | Stage 3 特征与信号 | 仅当 Z-Score 处于近期排名前 20% 时才放行 | 动态抬高入场门槛，防止频繁假突破进场 | `0.80` | 震荡市可提高至 `0.85`，牛市可调宽至 `0.70` |
+| 17 | 反转感知自适应去偏 | 策略配置 | `reversal_aware_debias` | Stage 3 特征与信号 | 反转行情下阻断系统性偏置扣减 | 识别超跌反转与见顶反转，保留反转爆发 Alpha | `True` | 开启后大幅提高拐点识别灵敏度，杜绝反转被钝化 |
+| 18 | 反转去偏偏置权重 | 策略配置 | `reversal_debias_weight` | Stage 3 特征与信号 | 反转形态下对 bias 的保留系数 | 0.0 表示反转态完全不扣减偏差，保留 100% 原始预期 | `0.0` | 0.0 ~ 0.5，平衡反转爆发与噪音防守 |
 | 19 | 均线过滤确认周期 | 超参常量 | `MA_PERIOD` | Stage 3 特征与信号 | 判定历史走势多头排列的均线天数 | 计算 20 日与 60 日均线 | `20, 60` | 顺势交易原则：禁止在严重单边顺势暴跌中左侧抄底 |
 | 20 | 极端过热 RSI 阈值 | 超参常量 | `RSI_OVERHEAT_THRESH`| Stage 4 九重风控审查 | 14 日 RSI 超买审查过滤线 | `RSI >= 80` 则严禁追高接盘 | `80.0` | 彻底避开情绪顶峰加速赶顶后的崩塌风险 |
 | 21 | 预测下探跌破保护比率| 超参常量 | `MAX_DOWNSIDE_RATIO`| Stage 4 九重风控审查 | 预期下探相对硬止损的比值审查 | 下探超 2 倍硬止损时强行否决，超 1 倍时缩减仓位 | `2.0` | 确保交易具备充分的盈亏比不对称优势 |
@@ -1246,10 +1282,17 @@ streamlit run backtest/app_backtest_dashboard.py
 | 29 | 移动跟踪止盈阈值 | `--trail-stop` | `args.trail_stop` | Stage 6 出场防守 | 浮盈达标后自持仓最高价的最大容忍回撤幅度 | 浮盈 `>= 2%` 且从最高点回撤 `>= 2.5%` 时止盈锁利 | `0.025` (2.5%) | 保护大肉波段利润，杜绝盈利转亏损 |
 | 30 | 最大宽限持仓交易日 | `--max-hold` | `args.max_hold` | Stage 6 出场防守 | 无论盈亏，单笔持仓绝对允许逗留的最大交易天数 | 持仓满 15 天强制挂单平仓，释放流动性 | `15` 天 | 防止短期波段交易沦为僵尸持仓套牢 |
 | 31 | 动量跃迁收益保护线 | 超参常量 | `RUN_PROFIT_MIN_GAIN` | Stage 6 出场防守 | 触发“让利润奔跑”动量跃迁的浮盈基础门槛 | 达到 `max(2%, stop * 1.2)` 且回撤极低时豁免到期强平 | `max(2%, 4.8%)` | 让主升浪牛股充分释放空间，追求超额大单收益 |
+| 32 | 计算硬件加速设备 | `--device` | `args.device` | Stage 1 预测生成 | 设定张量推理设备 (`auto`/`mps`/`cuda`/`cpu`) | 自动激活 Mac 苹果芯片 MPS 金属加速或 GPU 算力 | `None (auto)` | Mac 用户首选 `mps`，N卡服务器使用 `cuda` |
+| 33 | 静默关闭日志落盘 | `--no-log` | `args.no_log` | 全局日志治理 | 关闭本地文件日志落盘 Handler | 仅在控制台实时打印，不生成本地 `.log` 文本文件 | `False` | 磁盘空间敏感或极速批处理时使用 |
+| 34 | 清空当前标的日志 | `--clear-log` | `args.clear_log` | 全局日志治理 | 运行前扫描并清理当前标的历史日志文件 | 保证单次投研回测输出日志的干净与独立性 | `False` | 重新独立审视某标的回测日志时使用 |
+| 35 | 一键清空所有日志 | `--clear-all-logs` | `args.clear_all_logs` | 全局日志治理 | 清空 `output/` 目录下全部回测日志文件 | 彻底重置日志环境 | `False` | 启动大批量股票池回测前进行环境大扫除 |
+| 36 | 绝对信噪比入场门槛 | `--z-threshold` | `args.z_threshold` | Stage 3 特征与信号 | 绝对 Z-Score 买入准入门槛 | 净预期收益与时界波动率信噪比达标底线，摆脱分位数局限 | `0.70` | 建议 `0.65 ~ 0.75`，黄金平衡点 |
+| 37 | 关闭一手保底机制 | `--no-min-lot-guarantee`| `args.no_min_lot_guarantee` | Stage 5 资金风控与定仓 | 关闭针对高单价港美股的自动 1 手保底买入 | 严格执行风险预算整手向下截断（高单价可能为0股） | `False (默认开启)` | 评估极小资金规模严格风控边界时使用 |
+| 38 | 关闭盘中触发止损 | `--no-intraday-stop` | `args.no_intraday_stop` | Stage 6 出场防守 | 禁用依据当日最低价 `low <= stop_price` 盘中止损 | 仅在收盘后核算浮亏并顺延至次日开盘挂单平仓 | `False (默认开启)` | 模拟只看日线收盘的慢速决策系统时使用 |
 
 ---
 
-### 11.2 29 项回测评估指标端到端流向总表
+### 11.2 34 项回测评估指标端到端流向总表
 
 | 序号 | 指标名称 | 字段名 | 所属阶段 | 依赖的前序字段与数据源 | 数学计算逻辑 (纯文本代码逻辑) | 输出承载结构 | 机构合格阈值 / 参考区间 | 金融工程与风控业务意义 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -1282,6 +1325,11 @@ streamlit run backtest/app_backtest_dashboard.py
 | 27 | 策略日频收益波动率 | `daily_volatility` | Stage 8 绩效评价 | `backtest_df.daily_return` | `std(daily_ret)` | `metrics['daily_volatility']` | `< 1.5%` (稳健) | 净值序列的日频离散离散程度 |
 | 28 | 策略年化波动率 | `annual_volatility`| Stage 8 绩效评价 | `daily_volatility` | `daily_volatility * sqrt(252)` | `metrics['annual_volatility']`| `15% ~ 25%` (平衡) | 组合资产配置中衡量风险预算的基础参数 |
 | 29 | 资金单边换手率 | `turnover_rate` | Stage 8 绩效评价 | `trades.buy_cash`<br/>`backtest_df.nav` 均值 | `sum(buy_cash) / mean(nav)` | `metrics['turnover_rate']` | `3.0 ~ 8.0` 倍 | 监控交易摩擦磨损与交易频繁程度 |
+| 30 | 平均最大潜在盈利 | `avg_mfe` | Stage 8 绩效评价 | `trades.mfe_pct` | `mean([t.mfe_pct for t in trades])` | `metrics['平均MFE']` | `> 3.5%` (良好)<br/>`> 6.0%` (卓越) | 评估多头波段脉冲空间与止盈充分性，诊断是否卖得过早 |
+| 31 | 平均最大潜在逆行 | `avg_mae` | Stage 8 绩效评价 | `trades.mae_pct` | `mean([t.mae_pct for t in trades])` | `metrics['平均MAE']` | `< -2.5%` (稳健)<br/>`< -5.0%` (警示) | 评估持仓承受逆风下探程度，衡量止损线设置是否过紧或过宽 |
+| 32 | 时间暴露/持仓在市占比 | `exposure` | Stage 8 绩效评价 | `backtest_df.shares` | `count(shares > 0) / total_bars` | `metrics['持仓占比']` | `20% ~ 50%` (健康) | 衡量资金在险时间，低在市占比+高Alpha代表极高资金使用效率 |
+| 33 | 样本统计有效性达标标志 | `stat_reliable` | Stage 8 绩效评价 | `trades` 列表长度 | `len(trades) >= 20` | `metrics['统计可靠']` | `True` / `False` | 警示极少量交易样本带来的幸存者偏差，防范虚假高胜率 |
+| 34 | 期末强制平仓笔数 | `forced_exits` | Stage 8 绩效评价 | `trades.reason` | `count(reason == '回测结束强平')` | `metrics['期末强平笔数']` | `<= 1` 笔 | 监控边界效应，防止依靠期末未平仓浮盈虚增收益 |
 
 
 ## 12. 港美股多周期与生产级模块化架构演进手册 (V2.0 工业化重构)
@@ -1319,7 +1367,7 @@ V2.0 架构依据**「高内聚、低耦合、单一职责（SRP）」**原则�
  • 领域模型 (types)     • 行情获取 (data_fetcher)       • 策略基类 (BaseStrategy) • 经纪商基类 (BaseBroker)
  • 市场画像 (rules)     • AI 滚动推演 (kronos_predictor) • Kronos AI 策略          • 仿真撮合 (SimulatedBroker)
  • 时间粒度 (timeframes)• 缓存指纹防污染 (cache)        • 日内突破突破范例          • 仓位预算 (RiskBudgetSizer)
- • 独立日志 (logger)                                    • 滚动动态分位数          • 出场防守 (ExitStateMachine)
+ • 独立日志 (logger)                                    • 绝对信噪比门槛          • 出场防守 (ExitStateMachine)
                                                                              • 实盘网关 (Futu / IBKR)
      │                   │                               │                   │
      └───────────────────┼───────────────────────────────┼───────────────────┘
@@ -1349,7 +1397,7 @@ V2.0 架构依据**「高内聚、低耦合、单一职责（SRP）」**原则�
 
 #### 2. 港股制度画像 (MarketProfile: HK)
 - **交易机制**：T+0 交易合规；无涨跌停限制；整手申报制度（腾讯 100 股、小米 200 股、比亚迪 500 股、工行 1000 股、中石化 2000 股）。
-- **一手保底机制 ([`min_lot_guarantee`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/sizer.py#L75))**：
+- **一手保底机制 ([`min_lot_guarantee`](file:///Users/jyy/Documents/github_projects/Kronos/backtest/execution/sizer.py#L94))**：
   在小资金或严格风险预算下，高单价股票（如腾讯每手 4 万+ 港币）按风险预算计算出的股数经过整手向下取整后极易为 0 股，导致回测完全不交易。一手保底机制在账户现金充裕且单笔仓位不超过上限时，自动保底买入 1 手，真实还原港股实盘操作。
 - **印花税历史分段**：
   自动以 2023 年 11 月 17 日为界：

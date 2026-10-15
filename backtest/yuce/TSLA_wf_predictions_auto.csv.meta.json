@@ -11,7 +11,7 @@
   "min_down_quantile": 0.1,
   "particle_filter": false,
   "pf_val_window": 3,
-  "hist_last_date": "2026-10-13",
+  "hist_last_date": "2026-10-14",
   "n_hist": 479,
   "schema_version": 2
 }

@@ -519,6 +519,8 @@ class KronosBacktesterPro:
         max_auto_horizon: int = 10,
         particle_filter: bool = True,
         pf_confidence_threshold: float = 0.35,
+        reversal_aware_debias: bool = True,
+        reversal_debias_weight: float = 0.0,
         enable_log: bool = True,
         clear_log: bool = False,
         **kwargs,
@@ -567,6 +569,8 @@ class KronosBacktesterPro:
                 max_auto_horizon=max_auto_horizon,
                 particle_filter=particle_filter,
                 pf_confidence_threshold=pf_confidence_threshold,
+                reversal_aware_debias=reversal_aware_debias,
+                reversal_debias_weight=reversal_debias_weight,
             )
 
             print("\n[Step 2b] 预测技能体检")

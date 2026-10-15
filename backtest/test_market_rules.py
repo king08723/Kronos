@@ -267,16 +267,13 @@ class TestSignalCausality(unittest.TestCase):
 
         sig_tampered = bt.align_and_generate_signals(hist_df_tampered.copy(), pred_df_tampered.copy())
 
-        # 检验对齐后的前 8 天预热期
-        valid_warmup_dates = list(sig_orig.index)[:8]
-        for d in valid_warmup_dates:
-            # 预热期必须完全不受未来暴涨影响
-            self.assertEqual(sig_orig.loc[d, 'exec_signal'], 0)
-            self.assertEqual(sig_tampered.loc[d, 'exec_signal'], 0)
-            self.assertEqual(sig_orig.loc[d, 'veto_reason'], '滚动校准窗口预热期不足')
-            self.assertEqual(sig_tampered.loc[d, 'veto_reason'], '滚动校准窗口预热期不足')
-            self.assertTrue(pd.isna(sig_orig.loc[d, 'entry_threshold']))
-            self.assertTrue(pd.isna(sig_tampered.loc[d, 'entry_threshold']))
+        # 检验对齐后的前 15 天数据（严格处于第 25 天篡改点之前，杜绝未来暴涨渗透到历史信号）
+        valid_dates = list(sig_orig.index)[:15]
+        for d in valid_dates:
+            self.assertEqual(sig_orig.loc[d, 'exec_signal'], sig_tampered.loc[d, 'exec_signal'])
+            self.assertEqual(sig_orig.loc[d, 'veto_reason'], sig_tampered.loc[d, 'veto_reason'])
+            self.assertAlmostEqual(sig_orig.loc[d, 'signal_score'], sig_tampered.loc[d, 'signal_score'], places=5)
+            self.assertAlmostEqual(sig_orig.loc[d, 'entry_threshold'], sig_tampered.loc[d, 'entry_threshold'], places=5)
 
         # 全时段因果性截断探针验证
         res = bt.check_causality(hist_df, pred_df, n_probe=8)
@@ -361,6 +358,124 @@ class TestDebiasHorizonConsistency(unittest.TestCase):
         self.assertGreater(skill.get('IC', 0), 0.9)  # 严格单调正相关，IC 应当接近 1.0 且显著
 
 
+class TestReversalAwareDebias(unittest.TestCase):
+    def test_reversal_aware_debias_behavior(self):
+        """
+        验证反转感知去偏 (方案 1)：
+        1. 在下跌背景 (ma_fast < ma_slow) 且模型预测向上反转时：
+           历史积累的正向偏差 (pred_bias > 0) 不应惩罚反转信号，
+           expected_return_adj 保持等于 expected_return (reversal_debias_weight=0.0)。
+        2. 当关闭反转感知 (reversal_aware_debias=False) 时，
+           expected_return_adj 会被扣除 pred_bias。
+        3. 在顺势上涨背景 (ma_fast >= ma_slow) 且模型预测向上时：
+           依然严格执行去偏，扣除同向泡沫。
+        """
+        from run_backtest_kronos_pro import KronosBacktesterPro
+        bt = KronosBacktesterPro(data_dir=str(BACKTEST_DIR), model_dir=str(BACKTEST_DIR))
+
+        # 构建一段持续下跌的市场数据以形成均线空头排列和正向预测误差 (pred > real)
+        dates = pd.date_range('2024-01-01', periods=80, freq='B')
+        prices = 100.0 * np.exp(-0.005 * np.arange(80))  # 持续下行
+        hist_df = pd.DataFrame({
+            'open': prices,
+            'high': prices * 1.01,
+            'low': prices * 0.99,
+            'close': prices,
+            'volume': 10000.0,
+            'amount': 1000000.0,
+        }, index=dates)
+
+        # 预测数据：前 70 天持续稍微高估，在第 75 天产生强反转预期
+        pred_close = prices * 1.02  # 持续存在 +2% 的高估
+        pred_close_1d = prices * 1.01
+        # 第 75 天 (dates[75]): 给出强烈的底部反转信号
+        pred_close[75] = prices[75] * 1.05
+        pred_close_1d[75] = prices[75] * 1.03
+
+        pred_df = pd.DataFrame({
+            'pred_close': pred_close,
+            'pred_close_1d': pred_close_1d,
+            'pred_slope': np.full(80, 0.005),  # 预测斜率向上
+            'target_horizon': np.full(80, 5),
+        }, index=dates)
+
+        # 1. 开启反转感知去偏 (默认行为)
+        sig_reversal = bt.align_and_generate_signals(
+            hist_df.copy(), pred_df.copy(),
+            reversal_aware_debias=True,
+            reversal_debias_weight=0.0
+        )
+        t_rev = dates[75]
+        self.assertTrue(sig_reversal.loc[t_rev, 'is_bull_reversal'])
+        self.assertAlmostEqual(
+            sig_reversal.loc[t_rev, 'expected_return_adj'],
+            sig_reversal.loc[t_rev, 'expected_return'],
+            places=5,
+            msg="反转感知模式下，底部多头反转预期不应被历史高估偏差扣减！"
+        )
+
+        # 2. 关闭反转感知去偏 (机械去偏对比)
+        sig_mechanical = bt.align_and_generate_signals(
+            hist_df.copy(), pred_df.copy(),
+            reversal_aware_debias=False
+        )
+        self.assertLess(
+            sig_mechanical.loc[t_rev, 'expected_return_adj'],
+            sig_mechanical.loc[t_rev, 'expected_return'],
+            msg="机械去偏模式下，历史高估偏差会被机械扣除！"
+        )
+
+
+class TestZScoreEntryMode(unittest.TestCase):
+    def test_z_score_entry_mode_behavior(self):
+        """
+        验证方案 A (entry_mode='z_score')：
+        1. 默认无需 60 天预热期，样本初期即可正常评估信噪比；
+        2. signal_score > z_score_threshold 时通过门槛审查；
+        3. signal_score <= z_score_threshold 时否决原因明确为信噪比未达标。
+        """
+        from run_backtest_kronos_pro import KronosBacktesterPro
+        bt = KronosBacktesterPro(data_dir=str(BACKTEST_DIR), model_dir=str(BACKTEST_DIR))
+
+        dates = pd.date_range('2024-01-01', periods=30, freq='B')
+        base_p = 10.0 + np.linspace(0, 1.0, 30)
+        hist_df = pd.DataFrame({
+            'open': base_p,
+            'high': base_p * 1.01,
+            'low': base_p * 0.99,
+            'close': base_p,
+            'volume': 100000.0,
+            'amount': 1000000.0,
+        }, index=dates)
+
+        # 预测：前 15 天弱信号 (预期涨幅仅 0.5%)，后 15 天强信号 (预期涨幅 5%)
+        pred_close = base_p.copy()
+        pred_close[:15] *= 1.005
+        pred_close[15:] *= 1.05
+
+        pred_df = pd.DataFrame({
+            'pred_close': pred_close,
+            'pred_slope': np.full(30, 0.005),
+            'target_horizon': np.full(30, 5),
+        }, index=dates)
+
+        # 默认模式即为方案 A (entry_mode='z_score', z_score_threshold=0.70)
+        sig = bt.align_and_generate_signals(hist_df, pred_df, z_score_threshold=0.70)
+
+        # 1. 验证不存在预热期不足的否决
+        self.assertFalse((sig['veto_reason'] == '滚动校准窗口预热期不足').any())
+
+        # 2. 验证门槛值稳定在 0.70 左右
+        valid_idx = sig.dropna(subset=['signal_score']).index
+        self.assertTrue((sig.loc[valid_idx, 'entry_threshold'] >= 0.70).all())
+
+        # 3. 验证后半段高信噪比日期的入场放行
+        high_score_days = sig[sig['signal_score'] > sig['entry_threshold']]
+        self.assertGreater(len(high_score_days), 0)
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
 

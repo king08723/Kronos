@@ -194,6 +194,14 @@ class DataFetcher:
             os.path.join(model_dir, f"{clean_code}_kronos_predictions.csv"),
             os.path.join(model_dir, f"{clean_code}_predictions.csv"),
         ])
+        if not particle_filter:
+            # 降级保底：若未开启 --pf 但存在 _pf 预测文件，自动匹配复用
+            pred_candidates.extend([
+                os.path.join(model_dir, f"{clean_code}_wf_predictions_auto_pf.csv"),
+                os.path.join(model_dir, f"{prefix}_wf_predictions_auto_pf.csv"),
+                os.path.join(model_dir, f"{clean_code}_wf_predictions_pf.csv"),
+                os.path.join(model_dir, f"{prefix}_wf_predictions_pf.csv"),
+            ])
         pred_candidates = list(dict.fromkeys(pred_candidates))
         pred_file = next((p for p in pred_candidates if os.path.exists(p)), None)
         if not pred_file:

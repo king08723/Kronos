@@ -115,6 +115,8 @@ class KronosStrategy(BaseStrategy):
         allow_interpolated: bool = False,
         particle_filter: bool = True,
         pf_confidence_threshold: float = 0.35,
+        reversal_aware_debias: bool = True,
+        reversal_debias_weight: float = 0.0,
     ) -> pd.DataFrame:
         """
         核心时序对齐与信号生成。
@@ -127,9 +129,10 @@ class KronosStrategy(BaseStrategy):
           - atr[t]         使用截至 t-1 的真实波幅计算
         因此 raw_signal[t] 在 t-1 收盘即可确定，在 **t 日开盘** 撮合成交。
 
-        【入场判定（波动率自适应分位自校准）】
-        改用每标的滚动分位数自校准：signal_score 位于该标的自身过去校准窗口分布的
-        entry_percentile 分位之上。
+        【入场判定（绝对 Z-Score 信息信噪比门槛）】
+        采用信息信噪比绝对门槛：signal_score = expected_return_adj / (volatility * sqrt(T)) > z_score_threshold。
+        彻底消除传统滚动分位数在弱市"矮子拔将军"和强市"良机限流"的缺陷，且无 60 天预热期要求。
+        结合粒子滤波置信度进行安全边际动态上浮微调。
         在极端高波动率或黑天鹅阶段（年化波动率 >= vol_high_thresh 40%），校准窗口自动收缩
         至 calib_window_min (20~30 天)，消除滞后；在平稳震荡期维持基准 calib_window (60 天)，
         在二者之间根据年化波动率压力系数平滑线性插值过渡。
@@ -316,9 +319,51 @@ class KronosStrategy(BaseStrategy):
             
             # 单日中位数偏差按持有期扩展，保持与时界扩展波动率同量纲
             df['pred_bias'] = bias.fillna(0.0) * vol_scale
-            df['expected_return_adj'] = df['expected_return'] - df['pred_bias']
+
+            # --------------------------------------------------------------
+            # 状态感知自适应去偏 (Reversal-Aware Conditional De-biasing / 方案 1)
+            # --------------------------------------------------------------
+            # 在行情反转时，历史滚动偏差是由上一轮单边走势形成的“滞后误差”；
+            # 若机械扣除，会严重惩罚真实的反转 Alpha，导致买卖点滞后或被硬否决。
+            if reversal_aware_debias:
+                # 历史环境：基于截至 t-1 的均线状态判断中短期强弱 (严格 t-1，杜绝未来函数)
+                trend_down = (df['ma_fast'] < df['ma_slow']) | (df['close_prev'] < df['ma_fast'])
+                trend_up = (df['ma_fast'] >= df['ma_slow']) | (df['close_prev'] > df['ma_fast'])
+
+                # 底部反转 (Bullish Reversal): 弱势探底背景下，模型预测向上反转
+                is_bull_reversal = trend_down & (df['expected_return'] > 0)
+                if 'pred_slope' in df.columns:
+                    is_bull_reversal = is_bull_reversal & (df['pred_slope'] > 0)
+
+                # 顶部反转 (Bearish Reversal): 强势上升背景下，模型预测拐头向下
+                is_bear_reversal = trend_up & (df['expected_return'] < 0)
+                if 'pred_slope' in df.columns:
+                    is_bear_reversal = is_bear_reversal & (df['pred_slope'] < 0)
+
+                df['is_bull_reversal'] = is_bull_reversal
+                df['is_bear_reversal'] = is_bear_reversal
+                df['is_reversal'] = is_bull_reversal | is_bear_reversal
+
+                # 反转状态下历史同向偏差衰减 (默认完全豁免，权重为 reversal_debias_weight = 0.0)
+                # - 底部反转时阻断正偏差扣除 (防止将真实反转盈利扣为负)
+                # - 顶部反转时阻断负偏差回补 (防止将看空收益拉高导致无法离场)
+                reversal_mask = (is_bull_reversal & (df['pred_bias'] > 0)) | (is_bear_reversal & (df['pred_bias'] < 0))
+                bias_weight = np.where(reversal_mask, reversal_debias_weight, 1.0)
+
+                df['pred_bias_effective'] = df['pred_bias'] * bias_weight
+                df['expected_return_adj'] = df['expected_return'] - df['pred_bias_effective']
+            else:
+                df['is_bull_reversal'] = False
+                df['is_bear_reversal'] = False
+                df['is_reversal'] = False
+                df['pred_bias_effective'] = df['pred_bias']
+                df['expected_return_adj'] = df['expected_return'] - df['pred_bias']
         else:
             df['pred_bias'] = 0.0
+            df['pred_bias_effective'] = 0.0
+            df['is_bull_reversal'] = False
+            df['is_bear_reversal'] = False
+            df['is_reversal'] = False
             df['expected_return_adj'] = df['expected_return']
 
         df['volatility_scaled'] = (df['volatility'] * vol_scale).replace(0, np.nan)
@@ -363,26 +408,22 @@ class KronosStrategy(BaseStrategy):
             sel = mask & (veto == '')
             veto[sel] = reason
 
-        if dynamic_calib:
-            df['entry_threshold'] = compute_dynamic_rolling_quantile(
-                df['signal_score'].shift(1), dyn_windows, q=entry_percentile, min_periods_ratio=0.25, min_floor=8
-            )
-        else:
-            roll = df['signal_score'].shift(1).rolling(
-                calib_window, min_periods=max(10, calib_window // 4))
-            df['entry_threshold'] = roll.quantile(entry_percentile)
-        warmup = df['entry_threshold'].isna()
-        if warmup.any():
-            _add_veto(warmup, '滚动校准窗口预热期不足')
-
-        # 粒子滤波不确定性惩罚：置信度低于 0.6 时动态上浮入场分位要求 (要求更充足的安全边际)
+        # --------------------------------------------------------------
+        # 入场判定：绝对 Z-Score (信息信噪比) 门槛筛选
+        # --------------------------------------------------------------
+        # 直接使用无量纲信息信噪比阈值 z_score_threshold (如 0.70)，
+        # 彻底消除 60 天滚动分位在弱市"矮子拔将军"和强市"良机限流"的缺陷，
+        # 且无需任何预热期，极大提升样本利用率。
+        base_thresh = float(z_score_threshold)
         if particle_filter and 'pf_confidence' in df.columns:
+            # 粒子滤波安全边际调控：置信度低于 0.6 时动态上浮门槛
             pf_entry_penalty = np.where(df['pf_confidence'] < 0.6, (0.6 - df['pf_confidence']) * 0.4, 0.0)
-            df['entry_threshold'] = df['entry_threshold'] + pf_entry_penalty
+            df['entry_threshold'] = base_thresh + pf_entry_penalty
+        else:
+            df['entry_threshold'] = base_thresh
 
-        # 严格防偷价：预热期未建立稳定滚动分布前禁止交易
-        buy_cond = (~warmup) & (df['signal_score'] > df['entry_threshold'])
-        _add_veto(~buy_cond, '信号强度未进入滚动分位阈值')
+        buy_cond = df['signal_score'] > df['entry_threshold']
+        _add_veto(~buy_cond, f'信噪比未达标(signal_score<={base_thresh:.2f})')
 
         if 'pred_slope' in df.columns:
             c = df['pred_slope'] > 0
@@ -454,16 +495,10 @@ class KronosStrategy(BaseStrategy):
         # --------------------------------------------------------------
         buy_cnt = int(df['raw_signal'].sum())
         bear_cnt = int(df['bearish_signal'].sum())
-        if dynamic_calib:
-            thr_label = (
-                f"自适应{int(dyn_windows.min())}~{int(dyn_windows.max())}日 "
-                f"(均值{dyn_windows.mean():.1f}天) {entry_percentile:.0%} 分位"
-            )
-        else:
-            thr_label = f"滚动{calib_window}日 {entry_percentile:.0%} 分位"
+        thr_label = f"绝对信噪比 Z-Score >= {z_score_threshold:.2f}"
         logger.info(
             f"[信号诊断] 重叠 {len(df)} 交易日 ({df.index.min().date()} ~ {df.index.max().date()}) | "
-            f"自校准模式 | 预测时界={horizon_display} | 入场阈值={thr_label} | "
+            f"入场阈值={thr_label} | 预测时界={horizon_display} | "
             f"波动率窗口={volatility_window}天 | ATR窗口={atr_window}天 | 硬止损={hard_stop_loss:.2%} | "
             f"市场规则={self.profile.describe()}"
         )
@@ -479,10 +514,19 @@ class KronosStrategy(BaseStrategy):
             f"最大值={df['signal_score'].max():.3f}"
         )
         if debias:
+            reversal_info = ""
+            if reversal_aware_debias:
+                bull_rev_cnt = int(df['is_bull_reversal'].sum())
+                bear_rev_cnt = int(df['is_bear_reversal'].sum())
+                reversal_info = (
+                    f" | 反转感知去偏: 多头反转={bull_rev_cnt}天, "
+                    f"空头反转={bear_rev_cnt}天 (反转偏差衰减权重={reversal_debias_weight:.1f})"
+                )
             logger.info(
-                f"[信号诊断] 去偏: 原始预期收益均值={df['expected_return'].mean():+.2%}, "
+                f"[信号诊断] 去偏: 原始预期均值={df['expected_return'].mean():+.2%}, "
                 f"滚动偏差中位数={df['pred_bias'].median():+.2%}, "
                 f"去偏后均值={df['expected_return_adj'].mean():+.2%}"
+                f"{reversal_info}"
             )
         logger.info(
             f"[信号诊断] 触发结果: 买入信号 {buy_cnt} 天 ({buy_cnt/len(df):.1%}), "
@@ -510,7 +554,7 @@ class KronosStrategy(BaseStrategy):
             top_reason = veto_counts.index[0] if len(veto_counts) > 0 else '未知'
             logger.warning(
                 f"  ⚠️ 整个区间未触发任何买入信号。主要否决原因: {top_reason}。"
-                f"可调低 entry_percentile（当前 {entry_percentile:.0%}）或检查预测技能体检结果。"
+                f"可调低 z_score_threshold（当前 {z_score_threshold:.2f}）或检查预测技能体检结果。"
             )
 
         print(f"   信号统计: 共 {len(df)} 个交易日，"
@@ -610,10 +654,10 @@ class KronosStrategy(BaseStrategy):
                       f"全样本={mm['full']:.6f} vs 截断={mm['truncated']:.6f}")
 
         # ---- 2. 参数敏感性 ----
-        print("\n[2/3] 入场分位参数敏感性 ...")
+        print("\n[2/3] 信噪比门槛 (z_score_threshold) 参数敏感性 ...")
         sweep = []
-        for pct in (0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90):
-            kw = dict(base_kwargs); kw['entry_percentile'] = pct
+        for z_thr in (0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.20):
+            kw = dict(base_kwargs); kw['z_score_threshold'] = z_thr
             try:
                 sig = self.align_and_generate_signals(hist_df, pred_df, **kw)
                 bdf, tr = self.run_backtest_engine(
@@ -621,21 +665,21 @@ class KronosStrategy(BaseStrategy):
                     hard_stop_loss=base_kwargs.get('hard_stop_loss', 0.04),
                     max_holding_days=15)
                 mt = self.evaluate_metrics(bdf, tr)
-                sweep.append({'分位': pct, '收益': mt['累计收益率'],
+                sweep.append({'门槛': z_thr, '收益': mt['累计收益率'],
                               '回撤': mt['最大回撤'], '笔数': mt['总交易笔数']})
             except Exception as e:
-                sweep.append({'分位': pct, '收益': np.nan, '回撤': np.nan,
+                sweep.append({'门槛': z_thr, '收益': np.nan, '回撤': np.nan,
                               '笔数': 0, 'err': str(e)[:40]})
         report['sweep'] = sweep
         valid = [s for s in sweep if np.isfinite(s.get('收益', np.nan))]
         pos = [s for s in valid if s['收益'] > 0]
         pos_ratio = len(pos) / len(valid) if valid else 0.0
-        print(f"      {'分位':>6} {'累计收益':>10} {'最大回撤':>10} {'笔数':>6}")
+        print(f"      {'信噪比门槛':>10} {'累计收益':>10} {'最大回撤':>10} {'笔数':>6}")
         for s in sweep:
             if np.isfinite(s.get('收益', np.nan)):
-                print(f"      {s['分位']:>6.2f} {s['收益']:>+9.2%} {s['回撤']:>+9.2%} {s['笔数']:>6d}")
+                print(f"      {s['门槛']:>10.2f} {s['收益']:>+9.2%} {s['回撤']:>+9.2%} {s['笔数']:>6d}")
             else:
-                print(f"      {s['分位']:>6.2f} {'失败':>10} {'-':>10} {'-':>6}")
+                print(f"      {s['门槛']:>10.2f} {'失败':>10} {'-':>10} {'-':>6}")
         print(f"      正收益占比 {pos_ratio:.0%} "
               f"({'✅ 参数稳健' if pos_ratio >= 0.5 else '❌ 依赖特定参数，不可采信'})")
 
