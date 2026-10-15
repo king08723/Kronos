@@ -2,7 +2,7 @@
   "stock_code": "09988",
   "test_days": 120,
   "lookback": 120,
-  "step_size": 1,
+  "step_size": 2,
   "sample_count": 20,
   "forecast_horizon": "auto",
   "max_auto_horizon": 10,
@@ -11,7 +11,7 @@
   "min_down_quantile": 0.1,
   "particle_filter": false,
   "pf_val_window": 3,
-  "hist_last_date": "2026-10-09",
-  "n_hist": 471,
+  "hist_last_date": "2026-10-15",
+  "n_hist": 472,
   "schema_version": 2
 }

@@ -735,271 +735,226 @@ class KronosDataFetcher:
                     except Exception:
                         pass
 
-            return self._execute_walk_forward_inference(
-                hist_df=hist_df,
-                stock_code=stock_code,
-                clean_code=clean_code,
-                det_market=det_market,
-                output_dir=output_dir,
-                out_path=out_path,
-                test_days=test_days,
-                lookback=lookback,
-                step_size=step_size,
-                sample_count=sample_count,
-                temperature=temperature,
-                top_p=top_p,
-                forecast_horizon=forecast_horizon,
-                eval_horizon=eval_horizon,
-                is_auto_horizon=is_auto_horizon,
-                min_down_quantile=min_down_quantile,
-                particle_filter=particle_filter,
-                pf_val_window=pf_val_window,
-                pf_temperature=pf_temperature,
-                generate_future_dates_with_holidays=generate_future_dates_with_holidays,
-            )
+            self._ensure_predictor()
+
+            # 切分训练区间和回测区间
+            train_df  = hist_df.iloc[:-test_days]
+            test_df   = hist_df.iloc[-test_days:]
+            test_dates = test_df.index.tolist()
+
+            mkt_tag = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
+            horizon_label = f"Auto (最大探测={eval_horizon}天)" if is_auto_horizon else f"固定={eval_horizon}天"
+            print(f"\n📈 Walk-Forward 预测配置 [{mkt_tag} {clean_code}] (时界模式: {horizon_label}):")
+            print(f"   训练区间: {train_df.index.min().date()} → {train_df.index.max().date()} ({len(train_df)} 日)")
+            print(f"   回测区间: {test_df.index.min().date()} → {test_df.index.max().date()} ({len(test_df)} 日)")
+            print(f"   lookback={lookback}, step_size={step_size}, sample_count={sample_count}")
+
+            # 准备 OHLCV 数据列（Kronos 标准输入）
+            feature_cols = ['open', 'high', 'low', 'close', 'volume', 'amount']
+            available_cols = [c for c in feature_cols if c in hist_df.columns]
+
+            pred_records = {}  # date -> dict of metrics
+
+            # 确定需要实际推理的"锚点"日期
+            anchor_indices = list(range(0, len(test_dates), step_size))
+            if anchor_indices[-1] != len(test_dates) - 1:
+                anchor_indices.append(len(test_dates) - 1)
+
+            import time
+            t0 = time.time()
+
+            for seq_idx, anchor_idx in enumerate(anchor_indices):
+                target_date = test_dates[anchor_idx]
+
+                # 输入窗口：target_date 之前的 lookback 个交易日
+                all_up_to_target = hist_df[hist_df.index < target_date]
+                if len(all_up_to_target) < lookback:
+                    print(f"   ⚠️ {target_date.date()} 前历史不足 {lookback} 日，跳过")
+                    continue
+
+                # -------------------------------------------------------------
+                # 粒子滤波 (Particle Filtering / 玩法B)：配置验证窗口
+                # -------------------------------------------------------------
+                use_pf_this_step = (
+                    particle_filter and len(all_up_to_target) >= lookback + pf_val_window
+                )
+
+                if use_pf_this_step:
+                    # 把提示词窗口切分为：[前 lookback 天作为Prompt] + [后 pf_val_window 天作为已知验证走势]
+                    prompt_df = all_up_to_target.iloc[-(lookback + pf_val_window): -pf_val_window]
+                    val_df = all_up_to_target.iloc[-pf_val_window:]
+                    x_df = prompt_df[available_cols].copy()
+                    for col in available_cols:
+                        x_df[col] = pd.to_numeric(x_df[col], errors='coerce').fillna(0.0)
+                    x_timestamp = pd.Series(prompt_df.index)
+                    val_timestamps = list(val_df.index)
+                    real_val_closes = val_df['close'].values.astype(float)
+                else:
+                    window_df = all_up_to_target.iloc[-lookback:]
+                    x_df = window_df[available_cols].copy()
+                    for col in available_cols:
+                        x_df[col] = pd.to_numeric(x_df[col], errors='coerce').fillna(0.0)
+                    x_timestamp = pd.Series(window_df.index)
+                    val_timestamps = []
+                    real_val_closes = None
+
+                # 确定从 target_date 起未来 eval_horizon 个交易日的序列
+                if anchor_idx + eval_horizon <= len(test_dates):
+                    target_future_dates = test_dates[anchor_idx : anchor_idx + eval_horizon]
+                else:
+                    avail_dates = test_dates[anchor_idx:]
+                    needed = eval_horizon - len(avail_dates)
+                    extra_dates = generate_future_dates_with_holidays(avail_dates[-1], needed + 5, market=det_market, verbose=False)[:needed]
+                    target_future_dates = avail_dates + [pd.Timestamp(d) for d in extra_dates]
+
+                # 拼接验证窗口与未来预测窗口
+                full_target_dates = val_timestamps + list(target_future_dates)
+                y_timestamp = pd.Series(full_target_dates)
+                full_pred_len = len(full_target_dates)
+
+                # 蒙特卡洛多路径采样（保留逐路径明细，供 P2/P3 计算极值与分位）
+                paths = self._sample_paths(
+                    x_df=x_df,
+                    x_timestamp=x_timestamp,
+                    y_timestamp=y_timestamp,
+                    pred_len=full_pred_len,
+                    n_samples=sample_count,
+                    temperature=temperature,
+                    top_p=top_p,
+                )
+                if paths is None:
+                    print(f"   ⚠️ 预测失败，跳过 [{target_date.date()}]")
+                    continue
+
+                # -------------------------------------------------------------
+                # 粒子滤波动态重分配权重：基于对最近真实走势的拟合度打分
+                # -------------------------------------------------------------
+                weights = None
+                val_error = 0.0
+                if use_pf_this_step and 'close' in paths:
+                    val_pred_arr = paths['close'][:, :pf_val_window]  # (n_samples, pf_val_window)
+                    # 计算各粒子相对真实收盘价的加权相对误差 (Normalized RMSE)
+                    rel_err = (val_pred_arr - real_val_closes[None, :]) / (real_val_closes[None, :] + 1e-6)
+                    path_nrmse = np.sqrt(np.mean(rel_err ** 2, axis=1))  # (n_samples,)
+
+                    # 动态自适应 Softmax 温度系数
+                    err_std = float(np.std(path_nrmse))
+                    temp = pf_temperature if pf_temperature is not None else max(err_std, 0.015)
+                    # 数值稳定性 Softmax 计算
+                    exp_scores = np.exp(-(path_nrmse - np.min(path_nrmse)) / temp)
+                    weights = exp_scores / np.sum(exp_scores)
+                    val_error = float(np.average(path_nrmse, weights=weights))
+
+                    # 截断提取 target_date 及以后的未来推演部分
+                    future_paths = {k: v[:, pf_val_window:] for k, v in paths.items()}
+                else:
+                    future_paths = paths
+
+                prev_real_close = float(all_up_to_target['close'].iloc[-1])
+                rec = self._summarize_paths(
+                    paths=future_paths,
+                    min_down_quantile=min_down_quantile,
+                    prev_real_close=prev_real_close,
+                    is_auto_horizon=is_auto_horizon,
+                    eval_horizon=eval_horizon,
+                    weights=weights,
+                    val_error=val_error,
+                )
+                pred_records[target_date] = rec
+
+                elapsed = time.time() - t0
+                opt_horizon = int(rec['optimal_horizon'])
+                opt_str = f" [动态波峰 H*={opt_horizon}日]" if is_auto_horizon else ""
+                pf_str = f" [粒子置信={rec['pf_confidence']:.1%}, 误差={rec['pf_val_error']:.2%}]" if use_pf_this_step else ""
+                print(f"   [{seq_idx+1}/{len(anchor_indices)}] {target_date.date()} "
+                      f"期望={rec['pred_expected']:.3f} 波峰={rec['pred_path_max']:.3f}"
+                      f"(溢价{rec['peak_premium']*100:+.1f}%){opt_str}{pf_str} "
+                      f"(斜率={rec['pred_slope']*100:+.2f}%) "
+                      f"真实={hist_df.loc[target_date, 'close']:.3f} "
+                      f"(累计耗时 {elapsed:.1f}s)")
+
+                # 显存/内存释放保护
+                import gc
+                gc.collect()
+
+            # 标记哪些日期是真实推理出来的锚点，哪些是插值填充的
+            anchor_date_set = set(pred_records.keys())
+
+            # step_size > 1 时：用线性插值填充锚点之间的日期
+            # 注意：插值序列会被人为平滑，从而虚高 IC，因此带插值的数据禁止进入评估路径。
+            if step_size > 1 and len(pred_records) >= 2:
+                anchor_dates = sorted(pred_records.keys())
+                anchor_nums = [test_dates.index(d) for d in anchor_dates]
+                metric_keys = ['pred_expected', 'pred_path_max', 'pred_terminal', 'pred_close_1d',
+                               'pred_upper', 'pred_lower', 'pred_slope', 'pred_min_down',
+                               'optimal_horizon', 'peak_premium', 'n_samples',
+                               'pf_confidence', 'pf_val_error', 'pf_effective_n']
+                anchor_vals = {k: [pred_records[d].get(k, 0.0) for d in anchor_dates] for k in metric_keys}
+
+                for i, td in enumerate(test_dates):
+                    if td not in pred_records:
+                        pred_records[td] = {
+                            k: float(np.interp(i, anchor_nums, anchor_vals[k]))
+                            for k in metric_keys
+                        }
+
+            # 构建输出 DataFrame
+            sorted_dates = sorted(pred_records.keys())
+            quantile_label = (f"样本{sample_count}条_90分位" if sample_count >= 20
+                              else f"样本{sample_count}条_极大值")
+            lower_label = (f"样本{sample_count}条_10分位" if sample_count >= 20
+                           else f"样本{sample_count}条_极小值")
+            pred_df = pd.DataFrame({
+                '日期':             [d.strftime('%Y-%m-%d') for d in sorted_dates],
+                # 入场判定用（无偏期望值）
+                '预测期望收盘价':   [pred_records[d]['pred_expected'] for d in sorted_dates],
+                # 止盈目标用（路径最大值，结构性正偏，禁止用于入场）
+                '预测波峰收盘价':   [pred_records[d]['pred_path_max'] for d in sorted_dates],
+                '预测时界终值':     [pred_records[d]['pred_terminal'] for d in sorted_dates],
+                '预测收盘价_1日':   [pred_records[d]['pred_close_1d'] for d in sorted_dates],
+                f'预测上界({quantile_label})': [pred_records[d]['pred_upper'] for d in sorted_dates],
+                f'预测下界({lower_label})':   [pred_records[d]['pred_lower'] for d in sorted_dates],
+                '预测斜率':         [pred_records[d]['pred_slope'] for d in sorted_dates],
+                '预测最大下探':     [pred_records[d]['pred_min_down'] for d in sorted_dates],
+                '波峰溢价':         [pred_records[d]['peak_premium'] for d in sorted_dates],
+                '动态时界':         [int(round(pred_records[d]['optimal_horizon'])) for d in sorted_dates],
+                '时界':             ['auto' if is_auto_horizon else eval_horizon] * len(sorted_dates),
+                '采样路径数':       [int(round(pred_records[d]['n_samples'])) for d in sorted_dates],
+                '粒子滤波置信度':   [pred_records[d].get('pf_confidence', 1.0) for d in sorted_dates],
+                '粒子滤波验证误差': [pred_records[d].get('pf_val_error', 0.0) for d in sorted_dates],
+                '有效粒子数':       [pred_records[d].get('pf_effective_n', sample_count) for d in sorted_dates],
+                # 该行是真实推理还是插值产物：评估路径据此拒绝插值数据
+                '是否插值':         [0 if d in anchor_date_set else 1 for d in sorted_dates],
+            })
+
+            # 保存 CSV + 参数指纹（P4：防止参数变更后静默复用旧缓存）
+            os.makedirs(output_dir, exist_ok=True)
+            pred_df.to_csv(out_path, index=False, encoding='utf-8-sig')
+            self._write_cache_fingerprint(out_path, self._build_fingerprint(
+                stock_code=stock_code, test_days=test_days, lookback=lookback,
+                step_size=step_size, sample_count=sample_count,
+                forecast_horizon=forecast_horizon, max_auto_horizon=max_auto_horizon,
+                temperature=temperature, top_p=top_p, min_down_quantile=min_down_quantile,
+                particle_filter=particle_filter, pf_val_window=pf_val_window,
+                hist_last_date=str(hist_df.index.max().date()), n_hist=len(hist_df),
+            ))
+
+            interp_cnt = sum(1 for d in sorted_dates if d not in anchor_date_set)
+            print(f"\n✅ Walk-Forward 预测完成，结果已保存: {out_path}")
+            print(f"   覆盖 {len(sorted_dates)} 个交易日 "
+                  f"({sorted_dates[0].date()} → {sorted_dates[-1].date()})")
+            print(f"   真实推理 {len(sorted_dates) - interp_cnt} 条，插值填充 {interp_cnt} 条，"
+                  f"每条 {sample_count} 采样路径")
+            if interp_cnt > 0:
+                print(f"   ⚠️ 含插值数据，禁止用于技能评估与正式验收（插值会人为平滑序列、虚高 IC）")
+
+            # 返回标准格式
+            result_df = pred_df.set_index('日期')
+            result_df.index = pd.to_datetime(result_df.index)
+            return self._normalize_pred_columns(result_df)
+
         finally:
             _INFERENCE_LOCK.release()
-
-    def _execute_walk_forward_inference(
-        self,
-        hist_df: pd.DataFrame,
-        stock_code: str,
-        clean_code: str,
-        det_market: str,
-        output_dir: str,
-        out_path: str,
-        test_days: int,
-        lookback: int,
-        step_size: int,
-        sample_count: int,
-        temperature: float,
-        top_p: float,
-        forecast_horizon: Union[int, str],
-        eval_horizon: int,
-        is_auto_horizon: bool,
-        min_down_quantile: float,
-        particle_filter: bool,
-        pf_val_window: int,
-        pf_temperature: float,
-        generate_future_dates_with_holidays,
-    ) -> pd.DataFrame:
-        self._ensure_predictor()
-
-        # 切分训练区间和回测区间
-        train_df  = hist_df.iloc[:-test_days]
-        test_df   = hist_df.iloc[-test_days:]
-        test_dates = test_df.index.tolist()
-
-        mkt_tag = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
-        horizon_label = f"Auto (最大探测={eval_horizon}天)" if is_auto_horizon else f"固定={eval_horizon}天"
-        print(f"\n📈 Walk-Forward 预测配置 [{mkt_tag} {clean_code}] (时界模式: {horizon_label}):")
-        print(f"   训练区间: {train_df.index.min().date()} → {train_df.index.max().date()} ({len(train_df)} 日)")
-        print(f"   回测区间: {test_df.index.min().date()} → {test_df.index.max().date()} ({len(test_df)} 日)")
-        print(f"   lookback={lookback}, step_size={step_size}, sample_count={sample_count}")
-
-        # 准备 OHLCV 数据列（Kronos 标准输入）
-        feature_cols = ['open', 'high', 'low', 'close', 'volume', 'amount']
-        available_cols = [c for c in feature_cols if c in hist_df.columns]
-
-        pred_records = {}  # date -> dict of metrics
-
-        # 确定需要实际推理的"锚点"日期
-        anchor_indices = list(range(0, len(test_dates), step_size))
-        if anchor_indices[-1] != len(test_dates) - 1:
-            anchor_indices.append(len(test_dates) - 1)
-
-        import time
-        t0 = time.time()
-
-        for seq_idx, anchor_idx in enumerate(anchor_indices):
-            target_date = test_dates[anchor_idx]
-
-            # 输入窗口：target_date 之前的 lookback 个交易日
-            all_up_to_target = hist_df[hist_df.index < target_date]
-            if len(all_up_to_target) < lookback:
-                print(f"   ⚠️ {target_date.date()} 前历史不足 {lookback} 日，跳过")
-                continue
-
-            # -------------------------------------------------------------
-            # 粒子滤波 (Particle Filtering / 玩法B)：配置验证窗口
-            # -------------------------------------------------------------
-            use_pf_this_step = (
-                particle_filter and len(all_up_to_target) >= lookback + pf_val_window
-            )
-
-            if use_pf_this_step:
-                # 把提示词窗口切分为：[前 lookback 天作为Prompt] + [后 pf_val_window 天作为已知验证走势]
-                prompt_df = all_up_to_target.iloc[-(lookback + pf_val_window): -pf_val_window]
-                val_df = all_up_to_target.iloc[-pf_val_window:]
-                x_df = prompt_df[available_cols].copy()
-                for col in available_cols:
-                    x_df[col] = pd.to_numeric(x_df[col], errors='coerce').fillna(0.0)
-                x_timestamp = pd.Series(prompt_df.index)
-                val_timestamps = list(val_df.index)
-                real_val_closes = val_df['close'].values.astype(float)
-            else:
-                window_df = all_up_to_target.iloc[-lookback:]
-                x_df = window_df[available_cols].copy()
-                for col in available_cols:
-                    x_df[col] = pd.to_numeric(x_df[col], errors='coerce').fillna(0.0)
-                x_timestamp = pd.Series(window_df.index)
-                val_timestamps = []
-                real_val_closes = None
-
-            # 确定从 target_date 起未来 eval_horizon 个交易日的序列
-            if anchor_idx + eval_horizon <= len(test_dates):
-                target_future_dates = test_dates[anchor_idx : anchor_idx + eval_horizon]
-            else:
-                avail_dates = test_dates[anchor_idx:]
-                needed = eval_horizon - len(avail_dates)
-                extra_dates = generate_future_dates_with_holidays(avail_dates[-1], needed + 5, market=det_market, verbose=False)[:needed]
-                target_future_dates = avail_dates + [pd.Timestamp(d) for d in extra_dates]
-
-            # 拼接验证窗口与未来预测窗口
-            full_target_dates = val_timestamps + list(target_future_dates)
-            y_timestamp = pd.Series(full_target_dates)
-            full_pred_len = len(full_target_dates)
-
-            # 蒙特卡洛多路径采样（保留逐路径明细，供 P2/P3 计算极值与分位）
-            paths = self._sample_paths(
-                x_df=x_df,
-                x_timestamp=x_timestamp,
-                y_timestamp=y_timestamp,
-                pred_len=full_pred_len,
-                n_samples=sample_count,
-                temperature=temperature,
-                top_p=top_p,
-            )
-            if paths is None:
-                print(f"   ⚠️ 预测失败，跳过 [{target_date.date()}]")
-                continue
-
-            # -------------------------------------------------------------
-            # 粒子滤波动态重分配权重：基于对最近真实走势的拟合度打分
-            # -------------------------------------------------------------
-            weights = None
-            val_error = 0.0
-            if use_pf_this_step and 'close' in paths:
-                val_pred_arr = paths['close'][:, :pf_val_window]  # (n_samples, pf_val_window)
-                # 计算各粒子相对真实收盘价的加权相对误差 (Normalized RMSE)
-                rel_err = (val_pred_arr - real_val_closes[None, :]) / (real_val_closes[None, :] + 1e-6)
-                path_nrmse = np.sqrt(np.mean(rel_err ** 2, axis=1))  # (n_samples,)
-
-                # 动态自适应 Softmax 温度系数
-                err_std = float(np.std(path_nrmse))
-                temp = pf_temperature if pf_temperature is not None else max(err_std, 0.015)
-                # 数值稳定性 Softmax 计算
-                exp_scores = np.exp(-(path_nrmse - np.min(path_nrmse)) / temp)
-                weights = exp_scores / np.sum(exp_scores)
-                val_error = float(np.average(path_nrmse, weights=weights))
-
-                # 截断提取 target_date 及以后的未来推演部分
-                future_paths = {k: v[:, pf_val_window:] for k, v in paths.items()}
-            else:
-                future_paths = paths
-
-            prev_real_close = float(all_up_to_target['close'].iloc[-1])
-            rec = self._summarize_paths(
-                paths=future_paths,
-                min_down_quantile=min_down_quantile,
-                prev_real_close=prev_real_close,
-                is_auto_horizon=is_auto_horizon,
-                eval_horizon=eval_horizon,
-                weights=weights,
-                val_error=val_error,
-            )
-            pred_records[target_date] = rec
-
-            elapsed = time.time() - t0
-            opt_horizon = int(rec['optimal_horizon'])
-            opt_str = f" [动态波峰 H*={opt_horizon}日]" if is_auto_horizon else ""
-            pf_str = f" [粒子置信={rec['pf_confidence']:.1%}, 误差={rec['pf_val_error']:.2%}]" if use_pf_this_step else ""
-            print(f"   [{seq_idx+1}/{len(anchor_indices)}] {target_date.date()} "
-                  f"期望={rec['pred_expected']:.3f} 波峰={rec['pred_path_max']:.3f}"
-                  f"(溢价{rec['peak_premium']*100:+.1f}%){opt_str}{pf_str} "
-                  f"(斜率={rec['pred_slope']*100:+.2f}%) "
-                  f"真实={hist_df.loc[target_date, 'close']:.3f} "
-                  f"(累计耗时 {elapsed:.1f}s)")
-
-            # 显存/内存释放保护
-            import gc
-            gc.collect()
-
-        # 标记哪些日期是真实推理出来的锚点，哪些是插值填充的
-        anchor_date_set = set(pred_records.keys())
-
-        # step_size > 1 时：用线性插值填充锚点之间的日期
-        # 注意：插值序列会被人为平滑，从而虚高 IC，因此带插值的数据禁止进入评估路径。
-        if step_size > 1 and len(pred_records) >= 2:
-            anchor_dates = sorted(pred_records.keys())
-            anchor_nums = [test_dates.index(d) for d in anchor_dates]
-            metric_keys = ['pred_expected', 'pred_path_max', 'pred_terminal', 'pred_close_1d',
-                           'pred_upper', 'pred_lower', 'pred_slope', 'pred_min_down',
-                           'optimal_horizon', 'peak_premium', 'n_samples',
-                           'pf_confidence', 'pf_val_error', 'pf_effective_n']
-            anchor_vals = {k: [pred_records[d].get(k, 0.0) for d in anchor_dates] for k in metric_keys}
-
-            for i, td in enumerate(test_dates):
-                if td not in pred_records:
-                    pred_records[td] = {
-                        k: float(np.interp(i, anchor_nums, anchor_vals[k]))
-                        for k in metric_keys
-                    }
-
-        # 构建输出 DataFrame
-        sorted_dates = sorted(pred_records.keys())
-        quantile_label = (f"样本{sample_count}条_90分位" if sample_count >= 20
-                          else f"样本{sample_count}条_极大值")
-        lower_label = (f"样本{sample_count}条_10分位" if sample_count >= 20
-                       else f"样本{sample_count}条_极小值")
-        pred_df = pd.DataFrame({
-            '日期':             [d.strftime('%Y-%m-%d') for d in sorted_dates],
-            # 入场判定用（无偏期望值）
-            '预测期望收盘价':   [pred_records[d]['pred_expected'] for d in sorted_dates],
-            # 止盈目标用（路径最大值，结构性正偏，禁止用于入场）
-            '预测波峰收盘价':   [pred_records[d]['pred_path_max'] for d in sorted_dates],
-            '预测时界终值':     [pred_records[d]['pred_terminal'] for d in sorted_dates],
-            '预测收盘价_1日':   [pred_records[d]['pred_close_1d'] for d in sorted_dates],
-            f'预测上界({quantile_label})': [pred_records[d]['pred_upper'] for d in sorted_dates],
-            f'预测下界({lower_label})':   [pred_records[d]['pred_lower'] for d in sorted_dates],
-            '预测斜率':         [pred_records[d]['pred_slope'] for d in sorted_dates],
-            '预测最大下探':     [pred_records[d]['pred_min_down'] for d in sorted_dates],
-            '波峰溢价':         [pred_records[d]['peak_premium'] for d in sorted_dates],
-            '动态时界':         [int(round(pred_records[d]['optimal_horizon'])) for d in sorted_dates],
-            '时界':             ['auto' if is_auto_horizon else eval_horizon] * len(sorted_dates),
-            '采样路径数':       [int(round(pred_records[d]['n_samples'])) for d in sorted_dates],
-            '粒子滤波置信度':   [pred_records[d].get('pf_confidence', 1.0) for d in sorted_dates],
-            '粒子滤波验证误差': [pred_records[d].get('pf_val_error', 0.0) for d in sorted_dates],
-            '有效粒子数':       [pred_records[d].get('pf_effective_n', sample_count) for d in sorted_dates],
-            # 该行是真实推理还是插值产物：评估路径据此拒绝插值数据
-            '是否插值':         [0 if d in anchor_date_set else 1 for d in sorted_dates],
-        })
-
-        # 保存 CSV + 参数指纹（P4：防止参数变更后静默复用旧缓存）
-        os.makedirs(output_dir, exist_ok=True)
-        pred_df.to_csv(out_path, index=False, encoding='utf-8-sig')
-        self._write_cache_fingerprint(out_path, self._build_fingerprint(
-            stock_code=stock_code, test_days=test_days, lookback=lookback,
-            step_size=step_size, sample_count=sample_count,
-            forecast_horizon=forecast_horizon, max_auto_horizon=max_auto_horizon,
-            temperature=temperature, top_p=top_p, min_down_quantile=min_down_quantile,
-            particle_filter=particle_filter, pf_val_window=pf_val_window,
-            hist_last_date=str(hist_df.index.max().date()), n_hist=len(hist_df),
-        ))
-
-        interp_cnt = sum(1 for d in sorted_dates if d not in anchor_date_set)
-        print(f"\n✅ Walk-Forward 预测完成，结果已保存: {out_path}")
-        print(f"   覆盖 {len(sorted_dates)} 个交易日 "
-              f"({sorted_dates[0].date()} → {sorted_dates[-1].date()})")
-        print(f"   真实推理 {len(sorted_dates) - interp_cnt} 条，插值填充 {interp_cnt} 条，"
-              f"每条 {sample_count} 采样路径")
-        if interp_cnt > 0:
-            print(f"   ⚠️ 含插值数据，禁止用于技能评估与正式验收（插值会人为平滑序列、虚高 IC）")
-
-        # 返回标准格式
-        result_df = pred_df.set_index('日期')
-        result_df.index = pd.to_datetime(result_df.index)
-        return self._normalize_pred_columns(result_df)
 
     # 兼容别名
     generate_walk_forward_predictions = walk_forward_predict
