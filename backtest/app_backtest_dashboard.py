@@ -358,8 +358,10 @@ def render_batch_mode():
         # 4. 并发控制
         st.subheader("⚡ 4. 算力与并发")
         max_workers = st.slider("行情数据并发准备线程", 1, 12, 6)
-        parallel_stocks = st.slider("模型预测回测并发标的数", 1, 4, 1,
-                                    help="注意：深度学习模型预测消耗 GPU/CPU 算力与显存，建议设为 1 串行执行，避免显存溢出。")
+        parallel_stocks = st.slider(
+            "模型预测回测并发标的数", 1, 4, 1,
+            help="注意：在 Apple Silicon (Mac MPS) 环境下，多线程并发 GPU 推理极易触发 Metal 底层驱动冲突 (MTLCommandBuffer)。系统已在底层引入 GPU 互斥锁进行排队保护；建议保持为 1 以获最佳稳定性与吞吐量。"
+        )
 
         st.divider()
 

@@ -10,6 +10,7 @@ import os
 import sys
 import json
 import logging
+import threading
 from datetime import datetime, date
 from typing import Union, Optional, List, Dict, Tuple, Any
 import numpy as np
@@ -18,6 +19,9 @@ import pandas as pd
 from ..core.market_rules import SymbolResolver
 from .cache import CacheManager
 from .data_fetcher import DataFetcher, _import_data_utils
+
+# 全局模型推演线程锁：防止 Apple Silicon (MPS) 或多线程环境下并发调用 PyTorch 模型导致的 Metal 驱动断言冲突
+_INFERENCE_LOCK = threading.Lock()
 
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -708,6 +712,77 @@ class KronosDataFetcher:
                 f"实际只有 {len(hist_df)} 个。请增大 history_days 或减小 test_days/lookback。"
             )
 
+        # 针对并发场景进行 GPU/MPS 推理互斥保护（避免 Apple Silicon Metal 驱动 MTLCommandBuffer 并发断言崩溃）
+        waiting_lock = not _INFERENCE_LOCK.acquire(blocking=False)
+        if waiting_lock:
+            print(f"   ⏳ [GPU调度] 标的 {clean_code} 排队等待 GPU/模型资源（MPS/Metal 驱动互斥保护中）...")
+            _INFERENCE_LOCK.acquire()
+        try:
+            # 双重检查锁（DCL）：在当前线程等待锁期间，前面的线程可能已计算完成并保存了缓存
+            if not force_refresh and os.path.exists(target_path):
+                fp_ok, _ = self._check_cache_fingerprint(target_path, expected_fp)
+                if fp_ok:
+                    try:
+                        cached_pred = pd.read_csv(target_path, encoding='utf-8-sig')
+                        date_col = '日期' if '日期' in cached_pred.columns else cached_pred.columns[0]
+                        if len(cached_pred) >= min(test_days, 10):
+                            print(f"\n💾 [GPU调度复用] 命中已有 Walk-Forward 预测数据: {target_path}")
+                            result_df = cached_pred.set_index(date_col)
+                            result_df.index = pd.to_datetime(result_df.index)
+                            result_df = self._normalize_pred_columns(result_df)
+                            if 'pred_close' in result_df.columns:
+                                return result_df
+                    except Exception:
+                        pass
+
+            return self._execute_walk_forward_inference(
+                hist_df=hist_df,
+                stock_code=stock_code,
+                clean_code=clean_code,
+                det_market=det_market,
+                output_dir=output_dir,
+                out_path=out_path,
+                test_days=test_days,
+                lookback=lookback,
+                step_size=step_size,
+                sample_count=sample_count,
+                temperature=temperature,
+                top_p=top_p,
+                forecast_horizon=forecast_horizon,
+                eval_horizon=eval_horizon,
+                is_auto_horizon=is_auto_horizon,
+                min_down_quantile=min_down_quantile,
+                particle_filter=particle_filter,
+                pf_val_window=pf_val_window,
+                pf_temperature=pf_temperature,
+                generate_future_dates_with_holidays=generate_future_dates_with_holidays,
+            )
+        finally:
+            _INFERENCE_LOCK.release()
+
+    def _execute_walk_forward_inference(
+        self,
+        hist_df: pd.DataFrame,
+        stock_code: str,
+        clean_code: str,
+        det_market: str,
+        output_dir: str,
+        out_path: str,
+        test_days: int,
+        lookback: int,
+        step_size: int,
+        sample_count: int,
+        temperature: float,
+        top_p: float,
+        forecast_horizon: Union[int, str],
+        eval_horizon: int,
+        is_auto_horizon: bool,
+        min_down_quantile: float,
+        particle_filter: bool,
+        pf_val_window: int,
+        pf_temperature: float,
+        generate_future_dates_with_holidays,
+    ) -> pd.DataFrame:
         self._ensure_predictor()
 
         # 切分训练区间和回测区间

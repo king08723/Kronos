@@ -8,11 +8,11 @@
   "commission_rate": 0.0,
   "stamp_duty_rate": 0.0,
   "slippage_rate": 0.0005,
-  "exported_at": "2026-10-15 18:51:18",
+  "exported_at": "2026-10-15 23:14:32",
   "strategy_params": {
     "hard_stop": 0.04,
     "trail_stop": 0.025,
-    "max_hold": 10,
+    "max_hold": 15,
     "min_lot_guarantee": true,
     "risk_per_trade": 0.01,
     "max_position": 0.8,

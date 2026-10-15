@@ -372,6 +372,8 @@ class BatchBacktester:
         print("\n" + "=" * 75)
         print(f"📈 [2/4] 批量回测 (标的: {total} 只, 并发: {parallel_stocks})")
         print("=" * 75)
+        if parallel_stocks > 1:
+            print(f"💡 [算力调度] 并发标的数: {parallel_stocks}。深度学习 GPU 推理阶段已启用线程安全互斥保护（避免 Apple Silicon MPS/Metal 驱动断言冲突），回测撮合与归因分析并发执行。")
 
         ensure_output_directory(backtest_batch_dir)
         ensure_output_directory(kwargs.get('pred_dir', pred_dir))
