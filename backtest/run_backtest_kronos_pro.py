@@ -91,6 +91,11 @@ from backtest.core import (
     get_annualization_factor,
     detect_timeframe,
     resample_bars,
+    SessionResampler,
+    MultiTimeframeAligner,
+    TIMEFRAME_BEST_PRACTICES,
+    get_timeframe_defaults,
+    resolve_timeframe_params,
 )
 
 # ---------------------------------------------------------------------------
@@ -159,11 +164,11 @@ def cli_main():
         python backtest/run_backtest_kronos_pro.py 300418 --auto
 
         # 可选参数（--auto 模式）:
-        #   --test-days N       回测验证窗口长度，默认 60 个交易日
-        #   --lookback N        每步预测的历史窗口，默认 120 个交易日
+        #   --test-days N       回测验证窗口长度，默认 120 个交易日
+        #   --lookback N        每步预测的历史窗口，默认 90 个交易日
         #   --step-size N       Walk-Forward 滑动步长，默认 1（逐日），>1 加速但精度略降
-        #   --samples N         蒙特卡洛采样数，默认 3
-        #   --history-days N    拉取历史数据总天数，默认 400
+        #   --samples N         蒙特卡洛采样数，默认 20
+        #   --history-days N    拉取历史数据总天数，默认 700
 
         # 模式2：使用现有预测文件回测（要求预测文件与历史有 >=10 天重叠）
         python backtest/run_backtest_kronos_pro.py 300418
@@ -184,34 +189,34 @@ def cli_main():
                         help="Auto 模式下向前推演最大天数，默认 10")
     parser.add_argument("--test-days", type=int, default=120,
                         help="回测验证窗口长度（交易日数），默认 120 (约半年)")
-    parser.add_argument("--lookback", type=int, default=120,
-                        help="每步预测的历史窗口长度（交易日数），默认 120")
+    parser.add_argument("--lookback", type=int, default=90,
+                        help="每步预测的历史窗口长度（交易日数），默认 90 (契合 Kronos 官方训练先验)")
     parser.add_argument("--step-size", type=int, default=1,
                         help="Walk-Forward 步长，默认 1（逐日精确）。>1 跳步插值仅供预览，插值行会被排除在评估外")
-    parser.add_argument("--samples", type=int, default=20,
-                        help="蒙特卡洛采样路径数，默认 20（分位数估计所需的最低样本量）")
+    parser.add_argument("--samples", type=int, default=35,
+                        help="蒙特卡洛采样路径数，默认 35（支撑高精度分位数与粒子滤波估计）")
     parser.add_argument("--history-days", type=int, default=700,
                         help="拉取历史行情的总天数，默认 700 (自然日)")
     parser.add_argument("--capital", type=float, default=None,
                         help="初始资金（缺省按市场自动匹配：CN=10万, HK=30万, US=5万）")
-    parser.add_argument("--z-threshold", type=float, default=0.70,
-                        help="Z-Score 入场阈值，默认 0.70 (推荐 0.65~0.75，黄金平衡点)")
-    parser.add_argument("--hard-stop", type=float, default=0.04,
-                        help="可配置硬止损线，默认 0.04 (4%%)；同时约束买入侧预测最大下探过滤")
-    parser.add_argument("--trail-stop", type=float, default=0.025,
-                        help="移动止盈回撤，默认 0.025 (2.5%%)")
-    parser.add_argument("--max-hold", type=int, default=15,
-                        help="最大持仓天数，默认 15 (Auto模式下以波峰止盈优先)")
+    parser.add_argument("--z-threshold", type=float, default=None,
+                        help="Z-Score 入场阈值（默认按周期自适应：1d=0.55, 30m=0.75, 1m=1.05）")
+    parser.add_argument("--hard-stop", type=float, default=None,
+                        help="可配置硬止损线（默认按周期自适应：1d=4.0%, 30m=2.2%, 1m=0.8%）")
+    parser.add_argument("--trail-stop", type=float, default=None,
+                        help="移动止盈回撤（默认按周期自适应：1d=2.5%, 30m=1.6%, 1m=0.5%）")
+    parser.add_argument("--max-hold", type=int, default=None,
+                        help="最大持仓周期数（默认按周期自适应：1d=15天, 30m=24Bar, 1m=45Bar）")
     parser.add_argument("--force-refresh", action="store_true",
                         help="强制从网络重新拉取行情数据（忽略本地缓存）")
-    parser.add_argument("--entry-percentile", type=float, default=0.80,
-                        help="入场分位阈值，默认 0.80（取该标的自身信号分布的滚动前20%%）")
-    parser.add_argument("--calib-window", type=int, default=60,
-                        help="分位阈值与去偏的基准滚动校准窗口，默认 60 交易日")
+    parser.add_argument("--entry-percentile", type=float, default=None,
+                        help="入场分位阈值（默认按周期自适应：1d=0.80, 30m=0.82, 1m=0.90）")
+    parser.add_argument("--calib-window", type=int, default=None,
+                        help="分位阈值与去偏的基准滚动校准窗口（默认按周期自适应：1d=60, 30m=20, 1m=5）")
     parser.add_argument("--no-dynamic-calib", action="store_true",
                         help="关闭波动率自适应校准窗口（默认开启：高波动收缩至20~30天，平稳期维持60天）")
-    parser.add_argument("--calib-window-min", type=int, default=20,
-                        help="极端高波动率下校准窗口收缩下限，默认 20 交易日")
+    parser.add_argument("--calib-window-min", type=int, default=None,
+                        help="极端高波动率下校准窗口收缩下限（默认按周期自适应）")
     parser.add_argument("--vol-high-thresh", type=float, default=0.40,
                         help="极端高波动率年化阈值（默认 0.40 即 40%%，达到或超过时窗口收缩至下限）")
     parser.add_argument("--vol-low-thresh", type=float, default=0.20,
@@ -224,8 +229,8 @@ def cli_main():
                         help="关闭一手保底机制（默认开启，港美股高单价标的自适应）")
     parser.add_argument("--no-intraday-stop", action="store_true",
                         help="关闭盘中止损（默认开启，遵守市场 T+N 合规）")
-    parser.add_argument("--require-skill", action="store_true",
-                        help="预测技能体检未通过时直接中止回测")
+    parser.add_argument("--require-skill", action="store_true", default=False,
+                        help="预测技能体检未通过时直接中止回测（默认关闭，允许回测任意标的）")
     parser.add_argument("--market", type=str, default=None, choices=[None, 'CN', 'HK', 'US'],
                         help="强制指定市场规则，默认按股票代码自动推断")
     parser.add_argument("--particle-filter", "--pf", action="store_true",
@@ -234,6 +239,21 @@ def cli_main():
                         help="粒子滤波验证窗口天数，默认 3")
     parser.add_argument("--pf-threshold", type=float, default=0.35,
                         help="粒子滤波置信度准入阈值，默认 0.35")
+    parser.add_argument("--timeframe", "--tf", type=str, default="1d",
+                        choices=['1d', '60m', '30m', '15m', '5m', '1m'],
+                        help="回测目标时间周期粒度，默认 1d（日线），可选 60m / 30m / 15m / 5m / 1m")
+    parser.add_argument("--volume-cap", type=float, default=None,
+                        help="单 Bar 成交量流动性占用上限比例（如 0.05 即 5%%），超过部分整手截断，防止大单冲击")
+    parser.add_argument("--slippage-model", type=str, default=None, choices=["fixed", "dynamic"],
+                        help="滑点模型（默认按周期自适应：1d/60m=fixed, 30m/1m=dynamic）")
+    parser.add_argument("--intraday-exit-eod", action="store_true", default=None,
+                        help="日内收盘清仓模式 (不留隔夜头寸，T+0市场小周期默认自适应启用)")
+    parser.add_argument("--no-gap-protection", action="store_true", default=False,
+                        help="关闭隔夜跳空防守机制（默认开启：次日低开跌破止损线以实际开盘价真实穿透止损）")
+    parser.add_argument("--no-mtf-filter", action="store_true", default=False,
+                        help="关闭跨周期大级别宏观趋势滤网（默认开启：日内回测自动共振日线 MA20/MA60）")
+    parser.add_argument("--no-auto-adapt", action="store_true", default=False,
+                        help="关闭周期最佳实践参数自适应 (强制使用日线固定参数)")
     parser.add_argument("--device", type=str, default=None,
                         help="计算设备 (auto/mps/cuda/cpu，默认自动检测，Mac苹果芯片优先mps)")
     parser.add_argument("--no-log", action="store_true",
@@ -335,6 +355,31 @@ def cli_main():
         enable_log=not args.no_log,
     )
 
+    tf_resolved = resolve_timeframe_params(
+        timeframe=args.timeframe,
+        market=prof.market,
+        overrides={
+            'z_threshold': args.z_threshold,
+            'hard_stop': args.hard_stop,
+            'trail_stop': args.trail_stop,
+            'max_hold': args.max_hold,
+            'entry_percentile': args.entry_percentile,
+            'calib_window': args.calib_window,
+            'calib_window_min': args.calib_window_min,
+            'volume_cap': args.volume_cap,
+            'slippage_model': args.slippage_model,
+            'intraday_exit_eod': True if args.intraday_exit_eod else None,
+            'no_gap_protection': args.no_gap_protection,
+            'no_mtf_filter': args.no_mtf_filter,
+        },
+        auto_adapt=not args.no_auto_adapt,
+    )
+    tf_obj = TimeFrame.from_str(args.timeframe)
+    if not args.no_auto_adapt and args.timeframe != "1d":
+        print(f"🤖 [周期自适应] 已为 {prof.market} 标的 {target_stock} ({tf_obj.label}) 自动配置量化最佳实践参数:")
+        print(f"   止损: {tf_resolved['hard_stop']:.2%} | 移动止盈: {tf_resolved['trail_stop']:.2%} | 最多持有: {tf_resolved['max_hold']} Bar")
+        print(f"   信噪比: {tf_resolved['z_threshold']} | 分位: {tf_resolved['entry_percentile']:.2f} | 滑点模型: {tf_resolved['slippage_model']} | MTF共振: {tf_resolved['use_mtf_trend_filter']}\n")
+
     if args.auto and hist_df is not None and pred_df is not None:
         # AUTO 模式：直接用已获取的数据，跳过文件加载
         backtester.set_market(target_stock, market=args.market, log_dir=backtest_dir, enable_log=not args.no_log)
@@ -343,27 +388,29 @@ def cli_main():
 
         logger.info(f"[{clean_code}] ==================== KRONOS QUANT BACKTEST START (AUTO) ====================")
         logger.info(f"[{clean_code}] 标的代码: {target_stock} | 市场规则: {backtester.profile.describe()} | 初始资金: {backtester.profile.currency_symbol}{backtester.initial_capital:,.2f}")
-        logger.info(f"[{clean_code}] 策略配置: 止损={args.hard_stop:.2%}, 移动止盈={args.trail_stop:.2%}, 最大持仓={args.max_hold}天, 动态校准={'开启' if not args.no_dynamic_calib else '关闭'}, 风险预算={args.risk_per_trade:.2%}")
+        logger.info(f"[{clean_code}] 策略配置: 周期={tf_obj.value}, 止损={tf_resolved['hard_stop']:.2%}, 移动止盈={tf_resolved['trail_stop']:.2%}, 最大持仓={tf_resolved['max_hold']}Bar, 动态校准={'开启' if not args.no_dynamic_calib else '关闭'}, 风险预算={args.risk_per_trade:.2%}")
 
         print("\n[Step 2] 时序对齐 & 信号生成")
         signal_df = backtester.align_and_generate_signals(
             hist_df, pred_df,
-            z_score_threshold=args.z_threshold,
+            z_score_threshold=tf_resolved['z_threshold'],
             forecast_horizon=horizon_val,
             max_auto_horizon=args.max_auto_horizon if hasattr(args, 'max_auto_horizon') else 10,
-            hard_stop_loss=args.hard_stop,
-            entry_percentile=args.entry_percentile,
-            calib_window=args.calib_window,
+            hard_stop_loss=tf_resolved['hard_stop'],
+            entry_percentile=tf_resolved['entry_percentile'],
+            calib_window=tf_resolved['calib_window'],
             dynamic_calib=not args.no_dynamic_calib,
-            calib_window_min=args.calib_window_min,
+            calib_window_min=tf_resolved['calib_window_min'],
             vol_high_thresh=args.vol_high_thresh,
             vol_low_thresh=args.vol_low_thresh,
             particle_filter=args.particle_filter,
             pf_confidence_threshold=args.pf_threshold,
+            use_mtf_trend_filter=tf_resolved['use_mtf_trend_filter'],
+            auto_adapt_params=not args.no_auto_adapt,
         )
 
         print("\n[Step 2b] 预测技能体检")
-        skill = backtester.evaluate_prediction_skill(signal_df, hard_stop_loss=args.hard_stop)
+        skill = backtester.evaluate_prediction_skill(signal_df, hard_stop_loss=tf_resolved['hard_stop'])
         backtester.print_skill_report(skill, target_stock)
         if args.require_skill and not skill.get('tradable', False):
             reason = skill.get('error') or '; '.join(skill.get('不通过原因', []))
@@ -373,13 +420,18 @@ def cli_main():
         print("\n[Step 3] 逐日撮合状态机")
         backtest_df, trades = backtester.run_backtest_engine(
             signal_df,
-            hard_stop_loss=args.hard_stop,
-            trailing_stop=args.trail_stop,
-            max_holding_days=args.max_hold,
+            hard_stop_loss=tf_resolved['hard_stop'],
+            trailing_stop=tf_resolved['trail_stop'],
+            max_holding_days=tf_resolved['max_hold'],
             min_lot_guarantee=not args.no_min_lot_guarantee,
             risk_per_trade=args.risk_per_trade,
             max_position_pct=args.max_position,
             intraday_stop=not args.no_intraday_stop,
+            volume_participation_cap=tf_resolved['volume_participation_cap'],
+            slippage_model=tf_resolved['slippage_model'],
+            intraday_exit_at_eod=tf_resolved['intraday_exit_at_eod'],
+            overnight_gap_protection=tf_resolved['overnight_gap_protection'],
+            auto_adapt_params=not args.no_auto_adapt,
         )
         print("\n[Step 4] 绩效指标计算")
         metrics = backtester.evaluate_metrics(backtest_df, trades)
@@ -397,7 +449,7 @@ def cli_main():
             backtest_df=backtest_df,
             trades=trades,
             metrics=metrics,
-            params=vars(args),
+            params={**vars(args), **tf_resolved},
         )
         backtester._print_report(target_stock, metrics, trades)
         logger.info(f"[{clean_code}] ==================== KRONOS QUANT BACKTEST COMPLETED ====================\n")
@@ -406,6 +458,8 @@ def cli_main():
         result = backtester.run_complete_backtest(
             stock_code=target_stock,
             output_dir=backtest_dir,
+            timeframe=args.timeframe,
+            use_mtf_trend_filter=not args.no_mtf_filter,
             z_score_threshold=args.z_threshold,
             hard_stop_loss=args.hard_stop,
             trailing_stop=args.trail_stop,
@@ -429,6 +483,11 @@ def cli_main():
             pf_confidence_threshold=args.pf_threshold,
             enable_log=not args.no_log,
             clear_log=args.clear_log,
+            volume_participation_cap=args.volume_cap,
+            slippage_model=args.slippage_model,
+            intraday_exit_at_eod=args.intraday_exit_eod,
+            overnight_gap_protection=not args.no_gap_protection,
+            auto_adapt_params=not args.no_auto_adapt,
         )
         metrics = result[0]
 

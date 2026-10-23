@@ -20,9 +20,34 @@ import pandas as pd
 
 from ..core.types import Bar, Signal, TimeFrame
 from ..core.market_rules import MarketProfile, compute_open_limit_flags
+from ..core.timeframes import detect_timeframe, resolve_timeframe_params
+from ..core.mtf_aligner import MultiTimeframeAligner
 from .base import BaseStrategy
 
 logger = logging.getLogger("KronosBacktest")
+
+def _fast_median_1d(valid: np.ndarray) -> float:
+    m = len(valid)
+    mid = m // 2
+    if m % 2 == 1:
+        return float(np.partition(valid, mid)[mid])
+    else:
+        part = np.partition(valid, (mid - 1, mid))
+        return float((part[mid - 1] + part[mid]) * 0.5)
+
+
+def _fast_quantile_1d(valid: np.ndarray, q: float) -> float:
+    m = len(valid)
+    if m == 1:
+        return float(valid[0])
+    v_idx = q * (m - 1)
+    i = int(np.floor(v_idx))
+    fraction = v_idx - i
+    if fraction == 0 or i >= m - 1:
+        return float(np.partition(valid, i)[i])
+    part = np.partition(valid, (i, i + 1))
+    return float(part[i] + fraction * (part[i + 1] - part[i]))
+
 
 def compute_dynamic_rolling_quantile(
     series: pd.Series,
@@ -32,12 +57,14 @@ def compute_dynamic_rolling_quantile(
     min_floor: int = 8,
 ) -> pd.Series:
     """
-    计算动态变长窗口的滚动分位数（严格防未来函数）。
+    计算动态变长窗口的滚动分位数（严格防未来函数，线性选择 O(W) 加速版）。
 
     机制说明:
     在极端高波动率或黑天鹅阶段，固定长窗口会导致滞后钝化；而平稳震荡期需要长窗口保持统计稳定性。
     本函数支持逐日传入自适应计算得出的窗口长度 windows[i]，在截至当日 t 的历史切片上
     计算指定分位数 q（如 q=0.5 为动态中位数去偏，q=0.8 为 80% 动态入场分位门槛）。
+    采用快速选择算法 (np.partition) 代替全量排序切片，计算复杂度从 O(W log W) 降至 O(W)，
+    数值在浮点精度上与标准 np.quantile/median 严格等价。
 
     参数:
         series: 待统计的时序数据 (如 shift(1) 后的预测误差或 signal_score)
@@ -59,6 +86,8 @@ def compute_dynamic_rolling_quantile(
         windows = np.asarray(windows, dtype=int)
 
     result = np.full(n, np.nan, dtype=float)
+    is_median = (q == 0.5)
+
     for i in range(n):
         w = int(windows[i])
         min_p = max(min_floor, int(w * min_periods_ratio))
@@ -66,10 +95,11 @@ def compute_dynamic_rolling_quantile(
         chunk = vals[start : i + 1]
         valid = chunk[~np.isnan(chunk)]
         if len(valid) >= min_p:
-            if q == 0.5:
-                result[i] = np.median(valid)
+            if is_median:
+                result[i] = _fast_median_1d(valid)
             else:
-                result[i] = np.quantile(valid, q)
+                result[i] = _fast_quantile_1d(valid, q)
+
     return pd.Series(result, index=series.index, name=series.name)
 
 
@@ -98,16 +128,17 @@ class KronosStrategy(BaseStrategy):
         self,
         hist_df: pd.DataFrame,
         pred_df: pd.DataFrame,
-        z_score_threshold: float = 0.70,
+        z_score_threshold: Optional[float] = None,
         volatility_window: int = 14,
-        min_overlap_days: int = 10,
+        min_overlap_bars: Optional[int] = None,
+        min_overlap_days: Optional[int] = None,
         forecast_horizon: int = None,
         max_auto_horizon: int = 10,
-        hard_stop_loss: float = 0.04,
-        entry_percentile: float = 0.80,
-        calib_window: int = 60,
+        hard_stop_loss: Optional[float] = None,
+        entry_percentile: Optional[float] = None,
+        calib_window: Optional[int] = None,
         dynamic_calib: bool = True,
-        calib_window_min: int = 20,
+        calib_window_min: Optional[int] = None,
         vol_high_thresh: float = 0.40,
         vol_low_thresh: float = 0.20,
         debias: bool = True,
@@ -117,50 +148,139 @@ class KronosStrategy(BaseStrategy):
         pf_confidence_threshold: float = 0.35,
         reversal_aware_debias: bool = True,
         reversal_debias_weight: float = 0.0,
+        higher_hist_df: Optional[pd.DataFrame] = None,
+        use_mtf_trend_filter: Optional[bool] = None,
+        auto_adapt_params: bool = True,
+        timeframe: Optional[Union[str, TimeFrame]] = None,
+        **kwargs,
     ) -> pd.DataFrame:
         """
         核心时序对齐与信号生成。
 
         【时序不变量】
-        对每个交易日 t，信号 raw_signal[t] 只允许使用在 **t-1 收盘时点已知** 的信息：
+        对每个交易日/Bar t，信号 raw_signal[t] 只允许使用在 **t-1 收盘时点已知** 的信息：
           - pred_*[t]      由严格早于 t 的数据推理得到（walk_forward_predict 保证）
           - close_prev[t]  = close[t-1]
           - volatility[t]  使用截至 t-1 的收益率窗口计算
           - atr[t]         使用截至 t-1 的真实波幅计算
-        因此 raw_signal[t] 在 t-1 收盘即可确定，在 **t 日开盘** 撮合成交。
+        因此 raw_signal[t] 在 t-1 收盘即可确定，在 **t 日/Bar 开盘** 撮合成交。
 
-        【入场判定（绝对 Z-Score 信息信噪比门槛）】
-        采用信息信噪比绝对门槛：signal_score = expected_return_adj / (volatility * sqrt(T)) > z_score_threshold。
-        彻底消除传统滚动分位数在弱市"矮子拔将军"和强市"良机限流"的缺陷，且无 60 天预热期要求。
-        结合粒子滤波置信度进行安全边际动态上浮微调。
-        在极端高波动率或黑天鹅阶段（年化波动率 >= vol_high_thresh 40%），校准窗口自动收缩
-        至 calib_window_min (20~30 天)，消除滞后；在平稳震荡期维持基准 calib_window (60 天)，
-        在二者之间根据年化波动率压力系数平滑线性插值过渡。
+        【自适应周期最佳实践参数】
+        未显式指定的参数自动依据 detect_timeframe(hist_df) 适配最优默认值。
+
+        【跨周期双时钟宏观趋势滤网 (MTF Trend Filter)】
+        当小级别为日内高频 (如 30m / 60m) 时，自动启动大级别 (日线) 宏观趋势滤网，
+        通过 MultiTimeframeAligner 以零未来函数对齐日线 MA20 / MA60，实现双周期共振。
         """
+        # 防御性规整：确保索引为 DatetimeIndex
+        if not isinstance(hist_df.index, pd.DatetimeIndex):
+            hist_work = hist_df.copy()
+            date_col = 'date' if 'date' in hist_work.columns else (
+                'timestamps' if 'timestamps' in hist_work.columns else None
+            )
+            if date_col:
+                hist_work[date_col] = pd.to_datetime(hist_work[date_col])
+                hist_work = hist_work.set_index(date_col).sort_index()
+            else:
+                hist_work.index = pd.to_datetime(hist_work.index)
+            hist_df = hist_work
+
+        if not isinstance(pred_df.index, pd.DatetimeIndex):
+            pred_work_in = pred_df.copy()
+            date_col = 'date' if 'date' in pred_work_in.columns else (
+                '日期' if '日期' in pred_work_in.columns else None
+            )
+            if date_col:
+                pred_work_in[date_col] = pd.to_datetime(pred_work_in[date_col])
+                pred_work_in = pred_work_in.set_index(date_col).sort_index()
+            else:
+                pred_work_in.index = pd.to_datetime(pred_work_in.index)
+            pred_df = pred_work_in
+
+        tf = TimeFrame.from_str(timeframe) if timeframe else detect_timeframe(hist_df)
+
+        if auto_adapt_params:
+            adaptive_cfg = resolve_timeframe_params(
+                timeframe=tf,
+                market=getattr(self.profile, 'market', 'CN'),
+                overrides={
+                    'z_threshold': z_score_threshold,
+                    'hard_stop': hard_stop_loss,
+                    'entry_percentile': entry_percentile,
+                    'calib_window': calib_window,
+                    'calib_window_min': calib_window_min,
+                    'use_mtf_trend_filter': use_mtf_trend_filter,
+                },
+                auto_adapt=True,
+            )
+            z_score_threshold = adaptive_cfg['z_threshold']
+            hard_stop_loss = adaptive_cfg['hard_stop']
+            entry_percentile = adaptive_cfg['entry_percentile']
+            calib_window = adaptive_cfg['calib_window']
+            calib_window_min = adaptive_cfg['calib_window_min']
+            use_mtf_trend_filter = adaptive_cfg['use_mtf_trend_filter']
+        else:
+            z_score_threshold = 0.55 if z_score_threshold is None else z_score_threshold
+            hard_stop_loss = 0.04 if hard_stop_loss is None else hard_stop_loss
+            entry_percentile = 0.80 if entry_percentile is None else entry_percentile
+            calib_window = 60 if calib_window is None else calib_window
+            calib_window_min = 20 if calib_window_min is None else calib_window_min
+            use_mtf_trend_filter = True if use_mtf_trend_filter is None else use_mtf_trend_filter
+
         if not (0 < hard_stop_loss < 1):
             raise ValueError(
                 f"[PARAM ERROR] hard_stop_loss 须满足 0 < x < 1，当前值={hard_stop_loss}"
             )
+        pred_work = pred_df.copy()
 
-        common_dates = hist_df.index.intersection(pred_df.index)
-        overlap_days = len(common_dates)
+        # 最小重叠 K 线数量：优先取传入的 min_overlap_bars / min_overlap_days，缺省日线 10 根，分时 20 根
+        min_overlap = min_overlap_bars if min_overlap_bars is not None else (
+            min_overlap_days if min_overlap_days is not None else (10 if not tf.is_intraday else 20)
+        )
+        min_overlap_days = min_overlap  # 内部兼容
 
-        print(f"\n[对齐检测] 历史 ∩ 预测 重叠区间: {overlap_days} 个交易日")
+        common_dates = hist_df.index.intersection(pred_work.index)
+        overlap_bars = len(common_dates)
 
-        if overlap_days < min_overlap_days:
+        if overlap_bars < min_overlap and tf.is_intraday:
+            # 跨周期检测：如果模型预测为日度序列，自动广播映射到日内高频 Bar 上
+            hist_day_keys = set(d.date() if hasattr(d, 'date') else pd.to_datetime(d).date() for d in hist_df.index)
+            pred_day_keys = set(d.date() if hasattr(d, 'date') else pd.to_datetime(d).date() for d in pred_work.index)
+            day_overlap = len(hist_day_keys.intersection(pred_day_keys))
+            if day_overlap >= max(5, min_overlap // 5):
+                logger.info(f"   [MTF 跨周期对齐] 检测到日度预测 ({day_overlap} 交易日)，广播映射至 {tf.label} 日内 Bar...")
+                pred_work = MultiTimeframeAligner.broadcast_daily_to_intraday(hist_df, pred_df)
+                common_dates = hist_df.index.intersection(pred_work.index)
+                overlap_bars = len(common_dates)
+
+        bar_unit = "交易日" if not tf.is_intraday else "根 K线 (Bar)"
+        print(f"\n[对齐检测] 历史 ∩ 预测 重叠区间: {overlap_bars} {bar_unit} (周期: {tf.label})")
+
+        def _safe_dt_str(d):
+            if hasattr(d, 'strftime'):
+                if hasattr(d, 'hour') and (d.hour != 0 or d.minute != 0 or d.second != 0):
+                    return d.strftime('%Y-%m-%d %H:%M:%S')
+                return d.strftime('%Y-%m-%d')
+            elif hasattr(d, 'date'):
+                return str(d.date())
+            return str(d)
+
+        if overlap_bars < min_overlap:
+            h_max_str = _safe_dt_str(hist_df.index.max())
+            p_min_str = _safe_dt_str(pred_df.index.min())
             raise ValueError(
                 f"\n{'='*60}\n"
-                f"[BACKTEST ERROR] 重叠交易日不足，无法执行真实样本外回测！\n"
-                f"  • 历史数据结束: {hist_df.index.max().date()}\n"
-                f"  • 预测数据起始: {pred_df.index.min().date()}\n"
-                f"  • 当前重叠天数: {overlap_days} 天 (要求 >= {min_overlap_days} 天)\n"
+                f"[BACKTEST ERROR] 重叠 K 线 (Bar) 不足，无法执行真实样本外回测！\n"
+                f"  • 历史数据结束: {h_max_str}\n"
+                f"  • 预测数据起始: {p_min_str}\n"
+                f"  • 当前重叠根数: {overlap_bars} 根 Bar (要求 >= {min_overlap} 根 Bar，周期: {tf.label})\n"
                 f"\n解决方案：\n"
-                f"  请生成一份覆盖历史区间的 Kronos 预测序列，确保预测日期\n"
-                f"  与历史真实收盘价有至少 {min_overlap_days} 个交易日的重叠。\n"
+                f"  请生成一份覆盖历史区间的 Kronos 预测序列，确保预测时间戳\n"
+                f"  与历史真实收盘价有至少 {min_overlap} 根 K 线 (Bar) 的重叠。\n"
                 f"{'='*60}"
             )
 
-        print(f"   重叠区间: {common_dates.min().date()} → {common_dates.max().date()}")
+        print(f"   重叠区间: {_safe_dt_str(common_dates.min())} → {_safe_dt_str(common_dates.max())}")
         print(f"   [BACKTEST 模式] 以真实收盘价结算，执行严格样本外验证")
 
         # 自动推断预测时界 Horizon 与模式
@@ -211,21 +331,29 @@ class KronosStrategy(BaseStrategy):
         hist_work['atr_pct'] = atr_pct_raw.shift(1)
         hist_work['close_prev'] = hist_work['close'].shift(1)
 
-        # 趋势状态滞后一期
-        ma_fast = hist_work['close'].rolling(20, min_periods=10).mean().shift(1)
-        ma_slow = hist_work['close'].rolling(60, min_periods=20).mean().shift(1)
+        # 趋势状态滞后一期 (支持跨周期双时钟宏观趋势滤网)
+        if use_mtf_trend_filter and tf.is_intraday:
+            if higher_hist_df is not None:
+                hist_work = MultiTimeframeAligner.align_higher_to_lower(hist_work, higher_hist_df, prefix="htf_")
+            else:
+                hist_work = MultiTimeframeAligner.auto_align_dual_timeframe(hist_work, market=self.profile.market, prefix="htf_")
+            ma_fast = hist_work['htf_ma_fast']
+            ma_slow = hist_work['htf_ma_slow']
+        else:
+            ma_fast = hist_work['close'].rolling(20, min_periods=max(5, 10)).mean().shift(1)
+            ma_slow = hist_work['close'].rolling(60, min_periods=max(10, 20)).mean().shift(1)
         hist_work['ma_fast'] = ma_fast
         hist_work['ma_slow'] = ma_slow
 
         # 截取重叠回测区间
         df = hist_work.loc[common_dates].copy()
-        df['pred_close'] = pred_df.loc[common_dates, 'pred_close']
+        df['pred_close'] = pred_work.loc[common_dates, 'pred_close']
 
         for opt_col in ['pred_upper', 'pred_lower', 'pred_expected', 'pred_path_max',
                         'pred_terminal', 'pred_close_1d', 'pred_slope', 'pred_min_down', 'peak_premium',
                         'is_interpolated', 'pf_confidence', 'pf_val_error', 'pf_effective_n']:
-            if opt_col in pred_df.columns:
-                df[opt_col] = pred_df.loc[common_dates, opt_col]
+            if opt_col in pred_work.columns:
+                df[opt_col] = pred_work.loc[common_dates, opt_col]
 
         if 'pred_path_max' not in df.columns:
             df['pred_path_max'] = df['pred_close']
@@ -240,12 +368,12 @@ class KronosStrategy(BaseStrategy):
         # 动态最优时界 (optimal_horizon)
         dyn_h_col = None
         for cand in ['optimal_horizon', '动态时界']:
-            if cand in pred_df.columns:
+            if cand in pred_work.columns:
                 dyn_h_col = cand
                 break
 
         if dyn_h_col is not None:
-            df['target_horizon'] = (pred_df.loc[common_dates, dyn_h_col]
+            df['target_horizon'] = (pred_work.loc[common_dates, dyn_h_col]
                                     .reindex(df.index).astype(float)
                                     .fillna(5).clip(1, 20).round().astype(int))
             horizon_display = "Auto(极值自适应)"
@@ -277,8 +405,18 @@ class KronosStrategy(BaseStrategy):
         # --------------------------------------------------------------
         # 波动率自适应校准窗口 (Volatility-Adaptive Calibration Window)
         # --------------------------------------------------------------
-        # 年化波动率: 基于截至 t-1 的滚动波动率 (严格防偷价)
-        df['ann_vol'] = (df['volatility'] * np.sqrt(252)).fillna(vol_low_thresh)
+        # 年化波动率: 基于当前 K 线粒度的精确年化折算因子 (严格防偷价)
+        ann_factor = tf.annual_factor(market=self.profile.market)
+        df['ann_vol'] = (df['volatility'] * ann_factor).fillna(vol_low_thresh)
+
+        # 样本窗口自适应：日内高频下扩展统计样本 Bar 数量
+        if tf.is_intraday:
+            bars_per_day = tf.bars_per_day(market=self.profile.market)
+            eff_calib_window = calib_window * bars_per_day if calib_window <= 100 else calib_window
+            eff_calib_min = calib_window_min * bars_per_day if calib_window_min <= 50 else calib_window_min
+        else:
+            eff_calib_window = calib_window
+            eff_calib_min = calib_window_min
 
         if dynamic_calib:
             # 波动率压力系数 (0.0 表示平稳低波，1.0 表示极端高波)
@@ -286,14 +424,14 @@ class KronosStrategy(BaseStrategy):
                 (df['ann_vol'] - vol_low_thresh) / max(vol_high_thresh - vol_low_thresh, 1e-4),
                 0.0, 1.0
             )
-            # 动态窗口：从基准 calib_window 平滑收缩至 calib_window_min (四舍五入为整数天)
+            # 动态窗口：从基准 calib_window 平滑收缩至 calib_window_min
             dyn_windows = np.round(
-                calib_window - vol_stress * (calib_window - calib_window_min)
+                eff_calib_window - vol_stress * (eff_calib_window - eff_calib_min)
             ).astype(int)
             df['dyn_calib_window'] = dyn_windows
         else:
-            dyn_windows = np.full(len(df), calib_window, dtype=int)
-            df['dyn_calib_window'] = calib_window
+            dyn_windows = np.full(len(df), eff_calib_window, dtype=int)
+            df['dyn_calib_window'] = eff_calib_window
 
         # --------------------------------------------------------------
         # 预期收益与信号强度
@@ -411,7 +549,7 @@ class KronosStrategy(BaseStrategy):
         # --------------------------------------------------------------
         # 入场判定：绝对 Z-Score (信息信噪比) 门槛筛选
         # --------------------------------------------------------------
-        # 直接使用无量纲信息信噪比阈值 z_score_threshold (如 0.70)，
+        # 直接使用无量纲信息信噪比阈值 z_score_threshold (如 0.55)，
         # 彻底消除 60 天滚动分位在弱市"矮子拔将军"和强市"良机限流"的缺陷，
         # 且无需任何预热期，极大提升样本利用率。
         base_thresh = float(z_score_threshold)
@@ -493,18 +631,28 @@ class KronosStrategy(BaseStrategy):
         # --------------------------------------------------------------
         # 诊断输出
         # --------------------------------------------------------------
+        def _safe_log_dt(d):
+            if hasattr(d, 'strftime'):
+                if hasattr(d, 'hour') and (d.hour != 0 or d.minute != 0 or d.second != 0):
+                    return d.strftime('%Y-%m-%d %H:%M:%S')
+                return d.strftime('%Y-%m-%d')
+            elif hasattr(d, 'date'):
+                return str(d.date())
+            return str(d)
+
         buy_cnt = int(df['raw_signal'].sum())
         bear_cnt = int(df['bearish_signal'].sum())
+        bar_label = "交易日" if not tf.is_intraday else "根 Bar"
         thr_label = f"绝对信噪比 Z-Score >= {z_score_threshold:.2f}"
         logger.info(
-            f"[信号诊断] 重叠 {len(df)} 交易日 ({df.index.min().date()} ~ {df.index.max().date()}) | "
+            f"[信号诊断] 重叠 {len(df)} {bar_label} ({_safe_log_dt(df.index.min())} ~ {_safe_log_dt(df.index.max())}) | "
             f"入场阈值={thr_label} | 预测时界={horizon_display} | "
-            f"波动率窗口={volatility_window}天 | ATR窗口={atr_window}天 | 硬止损={hard_stop_loss:.2%} | "
+            f"波动率窗口={volatility_window}Bar | ATR窗口={atr_window}Bar | 硬止损={hard_stop_loss:.2%} | "
             f"市场规则={self.profile.describe()}"
         )
         if dynamic_calib:
             logger.info(
-                f"[信号诊断] 波动率自适应校准: 动态窗口范围={int(dyn_windows.min())}~{int(dyn_windows.max())}天 (均值={dyn_windows.mean():.1f}天) | "
+                f"[信号诊断] 波动率自适应校准: 动态窗口范围={int(dyn_windows.min())}~{int(dyn_windows.max())}Bar (均值={dyn_windows.mean():.1f}Bar) | "
                 f"年化波动率: 最低={df['ann_vol'].min():.1%}, 中位={df['ann_vol'].median():.1%}, 最高={df['ann_vol'].max():.1%}"
             )
         logger.info(
@@ -519,8 +667,8 @@ class KronosStrategy(BaseStrategy):
                 bull_rev_cnt = int(df['is_bull_reversal'].sum())
                 bear_rev_cnt = int(df['is_bear_reversal'].sum())
                 reversal_info = (
-                    f" | 反转感知去偏: 多头反转={bull_rev_cnt}天, "
-                    f"空头反转={bear_rev_cnt}天 (反转偏差衰减权重={reversal_debias_weight:.1f})"
+                    f" | 反转感知去偏: 多头反转={bull_rev_cnt}{bar_label}, "
+                    f"空头反转={bear_rev_cnt}{bar_label} (反转偏差衰减权重={reversal_debias_weight:.1f})"
                 )
             logger.info(
                 f"[信号诊断] 去偏: 原始预期均值={df['expected_return'].mean():+.2%}, "
@@ -529,8 +677,8 @@ class KronosStrategy(BaseStrategy):
                 f"{reversal_info}"
             )
         logger.info(
-            f"[信号诊断] 触发结果: 买入信号 {buy_cnt} 天 ({buy_cnt/len(df):.1%}), "
-            f"转空离场信号 {bear_cnt} 天 ({bear_cnt/len(df):.1%})"
+            f"[信号诊断] 触发结果: 买入信号 {buy_cnt} {bar_label} ({buy_cnt/len(df):.1%}), "
+            f"转空离场信号 {bear_cnt} {bar_label} ({bear_cnt/len(df):.1%})"
         )
 
         # 否决原因分布：直接回答「为什么这段时间不交易」
@@ -539,13 +687,13 @@ class KronosStrategy(BaseStrategy):
             logger.info("[信号诊断] 未触发原因分布:")
             for reason, cnt in veto_counts.items():
                 if reason:
-                    logger.info(f"    {reason}: {cnt} 天 ({cnt/len(df):.1%})")
+                    logger.info(f"    {reason}: {cnt} {bar_label} ({cnt/len(df):.1%})")
 
         if buy_cnt > 0:
             sig_rows = df[df['raw_signal'] == 1]
             for s_date, s_row in sig_rows.iterrows():
                 logger.info(
-                    f"  ⚡ 产生买入信号: {s_date.date()} 昨收={s_row['close_prev']:.3f}, "
+                    f"  ⚡ 产生买入信号: {_safe_log_dt(s_date)} 昨收={s_row['close_prev']:.3f}, "
                     f"期望价={s_row['pred_close']:.3f}, 去偏预期涨幅={s_row['expected_return_adj']*100:+.2f}%, "
                     f"波动率={s_row['volatility']*100:.2f}%, 强度={s_row['signal_score']:.2f} "
                     f"(阈值{s_row['entry_threshold']:.2f}), 仓位系数={s_row['position_scale']:.2f}"
@@ -557,9 +705,9 @@ class KronosStrategy(BaseStrategy):
                 f"可调低 z_score_threshold（当前 {z_score_threshold:.2f}）或检查预测技能体检结果。"
             )
 
-        print(f"   信号统计: 共 {len(df)} 个交易日，"
-              f"买入信号 {buy_cnt} 天 ({buy_cnt/len(df):.1%})，"
-              f"转空离场信号 {bear_cnt} 天 ({bear_cnt/len(df):.1%})")
+        print(f"   信号统计: 共 {len(df)} {bar_label}，"
+              f"买入信号 {buy_cnt} ({buy_cnt/len(df):.1%})，"
+              f"转空离场信号 {bear_cnt} ({bear_cnt/len(df):.1%})")
 
         return df
 
@@ -609,7 +757,8 @@ class KronosStrategy(BaseStrategy):
                 if pd.isna(a) and pd.isna(b):
                     continue
                 if pd.isna(a) != pd.isna(b) or abs(float(a) - float(b)) > 1e-6:
-                    mismatches.append({'date': str(d.date()), 'col': col,
+                    d_str = str(d.date()) if hasattr(d, 'date') else str(d)
+                    mismatches.append({'date': d_str, 'col': col,
                                        'full': float(a) if not pd.isna(a) else None,
                                        'truncated': float(b) if not pd.isna(b) else None})
 
@@ -697,9 +846,11 @@ class KronosStrategy(BaseStrategy):
                     part, hard_stop_loss=base_kwargs.get('hard_stop_loss', 0.04),
                     max_holding_days=15)
                 mt = self.evaluate_metrics(bdf, tr)
+                part_start_str = str(part.index.min().date()) if hasattr(part.index.min(), 'date') else str(part.index.min())
+                part_end_str = str(part.index.max().date()) if hasattr(part.index.max(), 'date') else str(part.index.max())
                 segs.append({'段': i + 1,
-                             '起': str(part.index.min().date()),
-                             '止': str(part.index.max().date()),
+                             '起': part_start_str,
+                             '止': part_end_str,
                              '收益': mt['累计收益率'], '笔数': mt['总交易笔数']})
         except Exception as e:
             print(f"      ⚠️ 分段检验失败: {e}")

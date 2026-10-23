@@ -19,11 +19,33 @@ import numpy as np
 import streamlit as st
 
 from ..core import (
+    TimeFrame,
     MarketProfile,
     SymbolResolver,
     clear_logs,
     set_logging_state,
+    get_timeframe_defaults,
+    resolve_timeframe_params,
 )
+
+# 跨市场标杆股票快速索引与多语言标签画像
+POPULAR_STOCKS_INFO = {
+    # A 股
+    "300418": ("昆仑万维", "CN"),
+    "600036": ("招商银行", "CN"),
+    "000001": ("平安银行", "CN"),
+    "603288": ("海天味业", "CN"),
+    # 港股
+    "00700": ("腾讯控股", "HK"),
+    "09988": ("阿里巴巴-W", "HK"),
+    "03690": ("美团-W", "HK"),
+    "00941": ("中国移动", "HK"),
+    # 美股
+    "AAPL": ("苹果公司", "US"),
+    "TSLA": ("特斯拉", "US"),
+    "MSFT": ("微软", "US"),
+    "NVDA": ("英伟达", "US"),
+}
 from ..data import (
     KronosDataFetcher,
     DataFetcher,
@@ -80,11 +102,18 @@ def render_single_backtest_dashboard():
     model_dir  = resolve_pred_dir()
     output_dir = os.path.join(BACKTEST_DIR, "output")
 
-    st.title("📈 Kronos Pro — 工业级量化回测系统")
-    st.caption(
-        "**严格防偷价 (t→t+1)** · Z-Score自适应信号 · A股真实摩擦 · 三重止损状态机 · "
-        "Walk-Forward 样本外验证"
-    )
+    c_hdr1, c_hdr2 = st.columns([8, 2])
+    with c_hdr1:
+        st.title("📈 Kronos Pro — 工业级量化回测系统")
+        st.caption(
+            "**严格防偷价 (t→t+1)** · Z-Score自适应信号 · 跨市场真实摩擦与撮合 · 三重止损状态机 · "
+            "Walk-Forward 样本外验证"
+        )
+    with c_hdr2:
+        st.write("")
+        if st.button("⬅️ 返回批量大盘", key="btn_back_to_batch", **_stretch_kw):
+            st.session_state["app_main_work_mode"] = "🏆 股票池批量回测大盘 (Batch Hub)"
+            st.rerun()
 
     available_stocks = get_available_stocks(data_dir, model_dir)
 
@@ -119,14 +148,103 @@ def render_single_backtest_dashboard():
 
         # ---- 标的选择 ----
         st.subheader("标的选择")
-        stock_candidates = sorted(set(available_stocks + ["300418", "600036", "000001"]))
-        default_idx = stock_candidates.index("300418") if "300418" in stock_candidates else 0
-        stock_option = st.selectbox("选择标的", stock_candidates + ["自定义输入"],
-                                    index=default_idx)
+
+        # 联动大盘批量池与全市场常用标的
+        active_batch_pool = st.session_state.get("active_batch_pool", [])
+        pool_codes = [it["stock_code"] for it in active_batch_pool if isinstance(it, dict) and "stock_code" in it]
+
+        candidate_set = set(available_stocks + list(POPULAR_STOCKS_INFO.keys()) + pool_codes)
+        stock_candidates = sorted(candidate_set)
+
+        # 智能同步选中标的：
+        # 若用户在批量大盘切换了不同的预设池，优先同步该池的首个标的；否则维持单标的看板用户的手动选择
+        current_batch_preset = st.session_state.get("active_batch_preset")
+        last_synced_preset = st.session_state.get("_last_synced_batch_preset")
+        if current_batch_preset and current_batch_preset != last_synced_preset and pool_codes:
+            st.session_state["_last_synced_batch_preset"] = current_batch_preset
+            preferred_stock = pool_codes[0]
+            st.session_state["single_active_stock"] = preferred_stock
+        else:
+            preferred_stock = st.session_state.get("single_active_stock")
+            if not preferred_stock or preferred_stock not in stock_candidates:
+                if pool_codes and pool_codes[0] in stock_candidates:
+                    preferred_stock = pool_codes[0]
+                elif "300418" in stock_candidates:
+                    preferred_stock = "300418"
+                else:
+                    preferred_stock = stock_candidates[0] if stock_candidates else "300418"
+
+        default_idx = stock_candidates.index(preferred_stock) if preferred_stock in stock_candidates else 0
+
+        def _format_stock_label(sc: str) -> str:
+            if sc == "自定义输入":
+                return "✏️ 自定义输入 (Manual Input)"
+            if sc in POPULAR_STOCKS_INFO:
+                name, mkt = POPULAR_STOCKS_INFO[sc]
+                flag = {"CN": "🇨🇳", "HK": "🇭🇰", "US": "🇺🇸"}.get(mkt, "🌐")
+                return f"{flag} {sc} ({name})"
+            prof = MarketProfile.for_stock(sc)
+            flag = {"CN": "🇨🇳", "HK": "🇭🇰", "US": "🇺🇸"}.get(prof.market, "🌐")
+            return f"{flag} {sc} ({prof.market})"
+
+        stock_option = st.selectbox(
+            "选择标的",
+            stock_candidates + ["自定义输入"],
+            index=default_idx,
+            format_func=_format_stock_label,
+            key="sv_stock_selectbox",
+        )
         if stock_option == "自定义输入":
-            selected_stock = st.text_input("输入股票代码", value="300418")
+            selected_stock = st.text_input("输入股票代码", value=preferred_stock, key="sv_stock_custom_input")
         else:
             selected_stock = stock_option
+        st.session_state["single_active_stock"] = selected_stock
+
+        # ---- K线周期选择 ----
+        timeframe_options = ["1d", "60m", "30m", "15m", "5m", "1m"]
+        synced_tf = st.session_state.get("active_timeframe", "1d")
+        default_tf_idx = timeframe_options.index(synced_tf) if synced_tf in timeframe_options else 0
+
+        timeframe_opt = st.selectbox(
+            "K线时间粒度 (TimeFrame)",
+            options=timeframe_options,
+            index=default_tf_idx,
+            key="sv_timeframe_selector",
+            format_func=lambda x: {
+                "1d": "日线 (1d · 默认)",
+                "60m": "60分钟 (60m · 4根/日)",
+                "30m": "30分钟 (30m · 8根/日)",
+                "15m": "15分钟 (15m · 16根/日)",
+                "5m": "5分钟 (5m · 48根/日)",
+                "1m": "1分钟 (1m · 240根/日)",
+            }.get(x, x),
+            help="选择回测的目标时间颗粒度。支持自动加载精确匹配文件或从底层高频分钟线现场无损合成。"
+        )
+        st.session_state["active_timeframe"] = timeframe_opt
+
+        auto_adapt_params = st.toggle(
+            "🤖 启用周期最优参数自适应 (Auto-Adapt)",
+            value=True,
+            help="开启后：切换 1d/60m/30m/15m/5m/1m 时，系统自动将止损止盈、信噪比、最大持仓时界、滑点冲击模型等适配至量化实盘最佳实践！仍可在下方手动微调。"
+        )
+
+        stock_mkt = MarketProfile.for_stock(selected_stock).market if selected_stock else 'CN'
+        tf_obj = TimeFrame.from_str(timeframe_opt)
+        tf_defaults = get_timeframe_defaults(timeframe=timeframe_opt, market=stock_mkt)
+        is_intraday = tf_obj.is_intraday
+        unit_label = "K线根数 (Bars)" if is_intraday else "交易日"
+
+        with st.container(border=True):
+            st.markdown(f"**🎯 周期量化画像 ({timeframe_opt})**：{tf_defaults.get('description', '')}")
+            c_r1, c_r2 = st.columns(2)
+            with c_r1:
+                st.caption(f"🛡️ 推荐止损: `{tf_defaults['hard_stop']*100:.1f}%`")
+                st.caption(f"⏳ 最大持仓: `{tf_defaults['max_hold']}` Bar")
+                st.caption(f"📶 信噪比门槛: `Z≥{tf_defaults['z_threshold']}`")
+            with c_r2:
+                st.caption(f"📈 移动止盈: `{tf_defaults['trail_stop']*100:.1f}%`")
+                st.caption(f"💧 滑点模型: `{tf_defaults['slippage_model']}`")
+                st.caption(f"⚡ MTF双周期: `{'启用' if tf_defaults['use_mtf_trend_filter'] else '无'}`")
 
         # ---- Walk-Forward 参数（仅 Auto 模式显示）----
         if is_auto_mode:
@@ -137,80 +255,92 @@ def render_single_backtest_dashboard():
                 index=0,
                 help="【Auto 极值自适应】：前瞻推演 10 天走势，自动识别未来波峰极大值与拐点，动态确定每笔交易的最优持仓时界。\n【固定预测时界】：传统固定天数 Horizon 回测。"
             )
+            def_test_bars = int(tf_defaults.get('test_bars', 120))
+            def_lookback_bars = int(tf_defaults.get('lookback_bars', 90))
+            def_step_size = int(tf_defaults.get('step_size', 1))
+            def_max_horizon = int(tf_defaults.get('max_auto_horizon', 10))
+            def_hist_days = int(tf_defaults.get('fetch_days', 700))
+
             if horizon_mode.startswith("🤖"):
                 forecast_horizon = "auto"
                 max_auto_horizon = st.slider(
-                    "最大推演搜索时界 (天)", min_value=5, max_value=20, value=10, step=1,
+                    f"最大推演搜索时界 ({unit_label})",
+                    min_value=2 if is_intraday else 5,
+                    max_value=30 if is_intraday else 20,
+                    value=def_max_horizon if auto_adapt_params else 10,
+                    step=1,
+                    key=f"sv_max_auto_h_{timeframe_opt}",
                     help=(
-                        "Auto 模式下模型向前推演的最大天数（推荐 8~12 交易日）。"
-                        "算法在该区间内搜寻期望收益最高的波峰点作为 optimal_horizon。\n\n"
-                        "⚠️ 超过 15 天时，Kronos 自回归误差会快速累积，"
-                        "argmax 趋向于漂移至末端，导致 optimal_horizon 虚高；"
-                        "5~12 天为最佳精度区间。"
+                        f"Auto 模式下模型向前推演的最大步数（{unit_label}）。"
+                        "算法在该区间内搜寻期望收益最高的波峰点作为 optimal_horizon。"
                     )
                 )
-                if max_auto_horizon > 12:
+                if (not is_intraday and max_auto_horizon > 12) or (is_intraday and max_auto_horizon > 24):
                     st.warning(
-                        f"⚠️ 当前推演时界 **{max_auto_horizon} 天** 超出建议范围（≤12天）。"
-                        f"Kronos 自回归在此跨度下误差累积显著，预测波峰位置可靠性下降。"
-                        f"建议调低至 **8~12 天**。",
+                        f"⚠️ 当前推演时界 **{max_auto_horizon} {unit_label}** 偏大，"
+                        f"Kronos 自回归在此跨度下误差累积显著，建议调低。",
                         icon="⚠️"
                     )
             else:
                 forecast_horizon = st.selectbox(
-                    "选择固定时界 (Horizon)",
-                    options=[1, 3, 5, 10],
+                    f"选择固定时界 ({unit_label})",
+                    options=[1, 3, 5, 10] if not is_intraday else [2, 4, 8, 16],
                     index=2,
-                    format_func=lambda x: f"{x} 天 ({'单日超短' if x==1 else '短线波段' if x==3 else '标准波段(推荐)' if x==5 else '双周中波段'})"
+                    key=f"sv_fixed_horizon_{timeframe_opt}",
+                    format_func=lambda x: f"{x} {unit_label}"
                 )
-                max_auto_horizon = 10
+                max_auto_horizon = def_max_horizon
 
             history_days = st.slider(
-                "历史数据获取天数", min_value=200, max_value=1200,
-                value=700, step=50,
-                help="从 AKShare 拉取的历史日K线总天数（自然日）。回测半年（120交易日）需至少 650 天以上。"
+                "历史数据获取天数 (自然日)",
+                min_value=15 if is_intraday else 200,
+                max_value=1200,
+                value=def_hist_days if auto_adapt_params else 700,
+                step=10 if is_intraday else 50,
+                key=f"sv_hist_days_{timeframe_opt}",
+                help="从数据源拉取的历史行情总天数（自然日）。"
             )
             test_days = st.slider(
-                "回测验证窗口 (交易日)", min_value=20, max_value=300,
-                value=120, step=5,
-                help="历史数据最后 N 个交易日作为回测验证区间，默认 120 个交易日（约半年）"
+                f"回测验证窗口 ({unit_label})",
+                min_value=20,
+                max_value=600 if is_intraday else 300,
+                value=def_test_bars if auto_adapt_params else 120,
+                step=10 if is_intraday else 5,
+                key=f"sv_test_days_{timeframe_opt}",
+                help=f"历史数据最后 N 个 {unit_label} 作为回测验证区间"
             )
             wf_lookback = st.slider(
-                "预测输入窗口 (交易日)", min_value=60, max_value=200,
-                value=120, step=10,
-                help="每次滚动预测时使用的历史窗口长度"
+                f"预测输入窗口 ({unit_label})",
+                min_value=30 if is_intraday else 60,
+                max_value=500 if is_intraday else 200,
+                value=def_lookback_bars if auto_adapt_params else 90,
+                step=10,
+                key=f"sv_lookback_{timeframe_opt}",
+                help=f"每次滚动预测时使用的历史窗口长度 ({unit_label})"
             )
-            min_needed_natural_days = int((test_days + wf_lookback) * 1.5)
-            if history_days < min_needed_natural_days:
-                st.warning(
-                    f"⚠️ 当前回测窗口({test_days}日) + 输入窗口({wf_lookback}日) 需要至少 "
-                    f"{test_days + wf_lookback} 个交易日（约 {min_needed_natural_days} 自然日）。\n"
-                    f"建议将【历史数据获取天数】调至 **{min_needed_natural_days}** 天以上，避免数据不足报错！"
-                )
-
             step_size = st.slider(
-                "滑动步长", min_value=1, max_value=10,
-                value=1, step=1,
-                help=("=1 逐日精确预测（正式验收必须用 1）；>1 跳步预测并线性插值，"
-                      "插值会人为平滑序列、虚高 IC，仅适合快速预览，"
-                      "插值行会被自动排除在信号与技能体检之外")
+                "滑动步长 (Step Size)",
+                min_value=1, max_value=10,
+                value=def_step_size if auto_adapt_params else 1,
+                step=1,
+                key=f"sv_step_size_{timeframe_opt}",
+                help="=1 逐根精确预测；>1 跳步预测并线性插值（提速一倍以上）"
             )
             wf_samples = st.slider(
                 "蒙特卡洛采样数", min_value=1, max_value=60,
-                value=20, step=1,
-                help=("每个时间步的独立采样路径数。≥20 才能支撑分位数估计；"
-                      "采样数过低还会放大 argmax 波峰正偏（3 条采样在纯噪声上就有 +3% 虚高）。"
-                      "采用批量并行推理，提高采样数几乎不增加耗时")
+                value=35, step=1,
+                key=f"sv_samples_{timeframe_opt}",
+                help="每个时间步的独立采样路径数。推荐 ≥35 支撑高精度分位数估计与粒子滤波。"
             )
-            force_refresh = st.checkbox("强制刷新行情缓存", value=False)
+            force_refresh = st.checkbox("强制刷新行情与预测缓存", value=False, key=f"sv_force_ref_{timeframe_opt}")
         else:
             forecast_horizon = "auto"
-            max_auto_horizon = 10
-            history_days = 700
-            test_days = 120
-            wf_lookback = 120
-            step_size = 1
-            wf_samples = 20
+            max_auto_horizon = int(tf_defaults.get('max_auto_horizon', 10))
+            history_days = int(tf_defaults.get('fetch_days', 700))
+            test_days = int(tf_defaults.get('test_bars', 120))
+            wf_lookback = int(tf_defaults.get('lookback_bars', 90))
+            step_size = int(tf_defaults.get('step_size', 1))
+            wf_samples = 35
             force_refresh = False
 
         st.divider()
@@ -236,79 +366,157 @@ def render_single_backtest_dashboard():
         )
 
         st.subheader("信号参数")
+        default_entry_pct = float(tf_defaults['entry_percentile']) if auto_adapt_params else 0.80
         entry_percentile = st.slider(
-            "入场分位阈值", min_value=0.50, max_value=0.95,
-            value=0.80, step=0.05,
+            "入场分位阈值", min_value=0.50, max_value=0.98,
+            value=default_entry_pct, step=0.01,
+            key=f"sv_entry_pct_{timeframe_opt}",
             help=("取该标的自身信号分布的滚动分位数作为阈值，替代固定 Z 值。\n"
                   "0.80 表示只在信号强度进入自身历史前 20% 时入场。\n"
                   "调低 = 交易更频繁。不同标的的预测量纲差异极大，分位数阈值能自动适配。")
         )
+        default_calib_win = int(tf_defaults['calib_window']) if auto_adapt_params else 60
         calib_window = st.slider(
-            "基准校准窗口 (交易日)", min_value=20, max_value=120,
-            value=60, step=10,
+            "基准校准窗口 (Bar数/天数)", min_value=5, max_value=120,
+            value=default_calib_win, step=5,
+            key=f"sv_calib_win_{timeframe_opt}",
             help="分位数阈值与预测去偏所用的基准回看窗口（平稳期维持此长度）"
         )
         dynamic_calib = st.checkbox(
             "启用波动率自适应校准窗口", value=True,
+            key=f"sv_dynamic_calib_{timeframe_opt}",
             help="极端高波动率或黑天鹅阶段（如年化波动率>40%）窗口自适应收缩至20~30天，避免60天窗口迟钝；震荡平稳期维持基准窗口"
         )
         if dynamic_calib:
+            default_calib_min = int(tf_defaults['calib_window_min']) if auto_adapt_params else 20
             calib_window_min = st.slider(
-                "高波动自适应窗口下限 (天)", min_value=15, max_value=40,
-                value=20, step=5,
-                help="当标的年化波动率达到或超过40%时采用的最小统计窗口，推荐20~30天"
+                "高波动自适应窗口下限", min_value=2, max_value=40,
+                value=default_calib_min, step=1,
+                key=f"sv_calib_min_{timeframe_opt}",
+                help="当标的年化波动率达到或超过40%时采用的最小统计窗口"
             )
         else:
             calib_window_min = 20
         vol_high_thresh = 0.40
         vol_low_thresh = 0.20
-        z_threshold = 0.70
+
+        default_z = float(tf_defaults['z_threshold']) if auto_adapt_params else 0.55
+        z_threshold = st.slider(
+            "绝对信噪比入场门槛 (Z-Score)", min_value=0.20, max_value=2.00,
+            value=default_z, step=0.05,
+            key=f"sv_z_thresh_{timeframe_opt}",
+            help="预测超额收益相对预期波动率的标准差倍数门槛，自适应按周期的信噪比推荐"
+        )
         vol_window = st.slider(
             "波动率计算窗口 (交易日)", min_value=5, max_value=30,
-            value=14, step=1
+            value=14, step=1,
+            key=f"sv_vol_win_{timeframe_opt}"
         )
 
         st.subheader("风控参数")
+        default_hard_stop = round(tf_defaults['hard_stop'] * 100, 2) if auto_adapt_params else 4.0
         hard_stop = st.slider(
-            "基准硬止损线 (%)", min_value=1.0, max_value=10.0,
-            value=4.0, step=0.5,
+            "基准硬止损线 (%)", min_value=0.2, max_value=15.0,
+            value=default_hard_stop, step=0.1,
+            key=f"sv_hard_stop_{timeframe_opt}",
             help="实际止损线由 ATR 自适应（1.5×ATR，限定在 2%~12%），该值用于保底与参照。"
         ) / 100.0
+
+        default_trail_stop = round(tf_defaults['trail_stop'] * 100, 2) if auto_adapt_params else 2.5
         trail_stop = st.slider(
-            "移动止盈回撤 (%)", min_value=1.0, max_value=8.0,
-            value=2.5, step=0.5,
-            help="持仓高点回撤超过此幅度且盈利>2%时止盈。同样按 ATR 自适应"
+            "移动止盈回撤 (%)", min_value=0.1, max_value=10.0,
+            value=default_trail_stop, step=0.1,
+            key=f"sv_trail_stop_{timeframe_opt}",
+            help="持仓高点回撤超过此幅度且盈利达标时止盈。高频周期自动收紧"
         ) / 100.0
+
         risk_per_trade = st.slider(
             "单笔风险预算 (%)", min_value=0.25, max_value=5.0,
             value=1.0, step=0.25,
+            key=f"sv_risk_per_trade_{timeframe_opt}",
             help=("每笔交易允许亏损的净值占比，仓位 = 风险预算 / 止损距离。\n"
                   "波动越大的标的仓位自动越小。")
         ) / 100.0
         max_position_pct = st.slider(
             "单标的仓位上限 (%)", min_value=10, max_value=100,
             value=80, step=5,
+            key=f"sv_max_pos_{timeframe_opt}",
             help="风险预算算出的仓位还会受此上限约束"
         ) / 100.0
         intraday_stop = st.checkbox(
             "盘中止损（遵守市场 T+N）", value=True,
+            key=f"sv_intraday_stop_{timeframe_opt}",
             help="开启后，当日最低价击穿止损价即在当日成交（跳空低开按开盘价）。A股严格遵守T+1开仓当日不触发，港美股T+0开仓当日亦可立即止损。"
         )
-        def_hold = 15 if forecast_horizon == "auto" else max(5, int(forecast_horizon))
+
+        default_max_hold = int(tf_defaults['max_hold']) if auto_adapt_params else (15 if forecast_horizon == "auto" else max(5, int(forecast_horizon)))
         max_hold = st.slider(
-            "最大持仓天数", min_value=2, max_value=30,
-            value=def_hold, step=1,
-            help="单笔交易最大持有天数。Auto 模式下以预测波峰止盈优先，超时平仓作为兜底风控"
+            "最大持仓周期数 (Bar数/天数)", min_value=1, max_value=120,
+            value=default_max_hold, step=1,
+            key=f"sv_max_hold_{timeframe_opt}",
+            help="单笔交易最大持有周期数。Auto 模式下以预测波峰止盈优先，超时平仓作为兜底风控"
         )
 
         st.subheader("交易成本")
         commission_bps = st.number_input(
             "券商佣金 (万分之)", min_value=0.1, max_value=10.0,
-            value=3.0, step=0.5
+            value=3.0, step=0.5,
+            key=f"sv_comm_bps_{timeframe_opt}"
         )
         slippage_bps = st.number_input(
             "滑点预估 (万分之)", min_value=0.0, max_value=20.0,
-            value=10.0, step=1.0
+            value=10.0, step=1.0,
+            key=f"sv_slip_bps_{timeframe_opt}"
+        )
+
+        st.subheader("高频流动性与跨周期共振")
+        default_cap_enable = (tf_defaults['volume_participation_cap'] is not None) if auto_adapt_params else False
+        enable_volume_cap = st.checkbox(
+            "启用单 Bar 流动性截断",
+            value=default_cap_enable,
+            key=f"sv_enable_vcap_{timeframe_opt}",
+            help="单笔大单在单根 Bar 撮合时的成交量上限（默认 10%），超出部分整手截断，防止市场冲击"
+        )
+        if enable_volume_cap:
+            default_cap_val = int((tf_defaults['volume_participation_cap'] or 0.10) * 100) if auto_adapt_params else 10
+            volume_cap_val = st.slider(
+                "单 Bar 成交量占比上限 (%)", min_value=1, max_value=20,
+                value=default_cap_val, step=1,
+                key=f"sv_vcap_val_{timeframe_opt}"
+            ) / 100.0
+        else:
+            volume_cap_val = None
+
+        default_slip_idx = (1 if tf_defaults['slippage_model'] == 'dynamic' else 0) if auto_adapt_params else 0
+        slippage_mode = st.radio(
+            "滑点模型",
+            options=["固定滑点 (Fixed)", "平方根动态冲击滑点 (Dynamic)"],
+            index=default_slip_idx,
+            key=f"sv_slip_mode_{timeframe_opt}",
+            help="【固定滑点】：按固定基准点差执行；【动态滑点】：基于市场微观平方根冲击定律与实时成交量占比动态计算真实摩擦。"
+        )
+        eff_slippage_model = "dynamic" if "Dynamic" in slippage_mode else "fixed"
+
+        default_eod_exit = bool(tf_defaults['intraday_exit_at_eod']) if auto_adapt_params else False
+        intraday_exit_eod = st.checkbox(
+            "日内收盘强平 (不留隔夜仓)",
+            value=default_eod_exit,
+            key=f"sv_eod_exit_{timeframe_opt}",
+            help="在交易日最后一根 Bar 强制清平所有多头仓位，仅做日内日冲交易，规避隔夜系统性风险（A股T+1自动保持合规）。"
+        )
+        default_gap_prot = bool(tf_defaults['overnight_gap_protection']) if auto_adapt_params else True
+        overnight_gap_protection = st.checkbox(
+            "开启隔夜跳空防守",
+            value=default_gap_prot,
+            key=f"sv_gap_prot_{timeframe_opt}",
+            help="次日低开跌破止损线以实际开盘价真实穿透止损，避免盘中止损线失效产生虚假高收益。"
+        )
+        default_mtf = bool(tf_defaults['use_mtf_trend_filter']) if auto_adapt_params else True
+        mtf_trend_filter = st.checkbox(
+            "跨周期宏观趋势滤网 (MTF Filter)",
+            value=default_mtf,
+            key=f"sv_mtf_{timeframe_opt}",
+            help="在小周期（如 30m / 60m）回测时，以零未来函数引入日线级别 MA20/MA60 宏观大趋势滤网进行双周期共振准入。"
         )
 
         st.divider()
@@ -335,11 +543,13 @@ def render_single_backtest_dashboard():
         run_btn = st.button("🚀 运行 Pro 回测", type="primary", **_stretch_kw)
 
     # ---------- 执行回测 ----------
-    run_key = (selected_stock, is_auto_mode, initial_capital, z_threshold, vol_window,
+    run_key = (selected_stock, timeframe_opt, is_auto_mode, initial_capital, z_threshold, vol_window,
                hard_stop, trail_stop, max_hold, commission_bps, slippage_bps,
                min_lot_guarantee, require_skill, entry_percentile, calib_window,
                dynamic_calib, calib_window_min, vol_high_thresh, vol_low_thresh,
                risk_per_trade, max_position_pct, intraday_stop,
+               volume_cap_val, eff_slippage_model, intraday_exit_eod,
+               overnight_gap_protection, mtf_trend_filter, auto_adapt_params,
                forecast_horizon if is_auto_mode else "auto",
                max_auto_horizon if is_auto_mode else 10,
                history_days if is_auto_mode else 0,
@@ -360,31 +570,35 @@ def render_single_backtest_dashboard():
 
     is_auto_h = (forecast_horizon == "auto" or (isinstance(forecast_horizon, str) and forecast_horizon.lower() == "auto"))
     cache_suffix = "_auto" if is_auto_h else (f"_h{forecast_horizon}" if int(forecast_horizon) > 1 else "")
-    wf_cache_file = os.path.join(model_dir, f"{selected_stock}_wf_predictions{cache_suffix}.csv")
+    tf_tag = f"_{timeframe_opt.lower()}" if timeframe_opt and timeframe_opt != "1d" else ""
+    wf_cache_candidates = [
+        os.path.join(model_dir, f"{selected_stock}{tf_tag}_wf_predictions{cache_suffix}.csv"),
+        os.path.join(model_dir, f"{selected_stock}_wf_predictions{cache_suffix}.csv"),
+    ]
+    wf_cache_file = next((p for p in wf_cache_candidates if os.path.exists(p)), wf_cache_candidates[0])
     has_wf_cache = (not force_refresh) and os.path.exists(wf_cache_file)
 
     current_loaded_stock = st.session_state.get("bt_data", {}).get("stock_code")
-    stock_changed = (current_loaded_stock != selected_stock)
-    need_initial_load = ("bt_data" not in st.session_state) or stock_changed
-
-    should_execute = False
-    is_auto_preloading = False
+    current_loaded_tf = st.session_state.get("bt_data", {}).get("timeframe")
+    stock_changed = (current_loaded_stock != selected_stock) or (current_loaded_tf != timeframe_opt)
 
     if run_btn:
         should_execute = True
-    elif need_initial_load:
-        if (is_auto_mode and has_wf_cache) or (not is_auto_mode):
-            should_execute = True
-            is_auto_preloading = True
+    else:
+        should_execute = False
+        if stock_changed and "bt_data" in st.session_state:
+            # 标的或周期切换后，若尚未点击运行，清空旧标的的历史渲染，提示用户配置参数并启动
+            st.session_state.pop("bt_data", None)
+            st.session_state.pop("bt_key", None)
 
     if should_execute:
         if is_auto_mode:
-            h_label = "Auto 极值自适应" if is_auto_h else f"Horizon={forecast_horizon}天"
+            h_label = "Auto 极值自适应" if is_auto_h else f"Horizon={forecast_horizon}步"
             if has_wf_cache:
-                spinner_msg = f"📁 命中 {selected_stock} 已有 ({h_label}) 预测缓存，正在秒级执行回测与结算..."
+                spinner_msg = f"📁 命中 {selected_stock} ({timeframe_opt} · {h_label}) 预测缓存，正在秒级执行回测与结算..."
             else:
                 spinner_msg = (
-                    f"正在自动获取 {selected_stock} 行情并执行 Walk-Forward 多时界预测 ({h_label})...\n"
+                    f"正在自动获取 {selected_stock} 行情并执行 Walk-Forward 多时界预测 ({timeframe_opt} · {h_label})...\n"
                     f"（step_size={step_size} 时约需 {test_days // step_size * 2}~"
                     f"{test_days // step_size * 5} 秒，请耐心等待）"
                 )
@@ -403,6 +617,9 @@ def render_single_backtest_dashboard():
                         forecast_horizon=forecast_horizon,
                         max_auto_horizon=max_auto_horizon,
                         force_refresh=force_refresh,
+                        timeframe=timeframe_opt,
+                        test_bars=test_days,
+                        lookback_bars=wf_lookback,
                     )
                     backtester.set_market(selected_stock)
                     signal_df = backtester.align_and_generate_signals(
@@ -418,6 +635,7 @@ def render_single_backtest_dashboard():
                         calib_window_min=calib_window_min,
                         vol_high_thresh=vol_high_thresh,
                         vol_low_thresh=vol_low_thresh,
+                        use_mtf_trend_filter=mtf_trend_filter,
                     )
                     skill = backtester.evaluate_prediction_skill(signal_df, hard_stop_loss=hard_stop)
                     backtester.print_skill_report(skill, selected_stock)
@@ -438,6 +656,11 @@ def render_single_backtest_dashboard():
                         risk_per_trade=risk_per_trade,
                         max_position_pct=max_position_pct,
                         intraday_stop=intraday_stop,
+                        volume_participation_cap=volume_cap_val,
+                        slippage_model=eff_slippage_model,
+                        intraday_exit_at_eod=intraday_exit_eod,
+                        overnight_gap_protection=overnight_gap_protection,
+                        auto_adapt_params=auto_adapt_params,
                     )
                     metrics = backtester.evaluate_metrics(backtest_df, trades)
                     metrics['_skill'] = skill
@@ -446,19 +669,17 @@ def render_single_backtest_dashboard():
                         selected_stock, output_dir, show_plot=False,
                     )
                 except Exception as e:
-                    if is_auto_preloading:
-                        logger.warning(f"自动预加载 {selected_stock} 失败: {e}")
-                        metrics = None
-                    else:
-                        st.error(f"❌ Auto 模式失败：{e}", icon="🚫")
-                        st.code(traceback.format_exc())
-                        st.stop()
+                    st.error(f"❌ Auto 模式失败：{e}", icon="🚫")
+                    st.code(traceback.format_exc())
+                    st.stop()
         else:
             with st.spinner(f"正在对 {selected_stock} 执行样本外回测..."):
                 try:
                     result = backtester.run_complete_backtest(
                         stock_code=selected_stock,
                         output_dir=output_dir,
+                        timeframe=timeframe_opt,
+                        use_mtf_trend_filter=mtf_trend_filter,
                         z_score_threshold=z_threshold,
                         volatility_window=vol_window,
                         hard_stop_loss=hard_stop,
@@ -476,15 +697,16 @@ def render_single_backtest_dashboard():
                         min_lot_guarantee=min_lot_guarantee,
                         intraday_stop=intraday_stop,
                         require_skill=require_skill,
+                        volume_participation_cap=volume_cap_val,
+                        slippage_model=eff_slippage_model,
+                        intraday_exit_at_eod=intraday_exit_eod,
+                        overnight_gap_protection=overnight_gap_protection,
+                        auto_adapt_params=auto_adapt_params,
                     )
                     metrics, signal_df, backtest_df, trades, fig = result
                 except Exception as me:
-                    if is_auto_preloading:
-                        logger.warning(f"自动预加载 {selected_stock} 失败: {me}")
-                        metrics = None
-                    else:
-                        st.error(f"❌ 回测失败: {me}")
-                        metrics = None
+                    st.error(f"❌ 回测失败: {me}", icon="🚫")
+                    metrics = None
 
         if metrics is not None:
             plotly_fig = None
@@ -499,6 +721,7 @@ def render_single_backtest_dashboard():
 
             st.session_state["bt_data"] = {
                 "stock_code": selected_stock,
+                "timeframe": timeframe_opt,
                 "mode": "Auto" if is_auto_mode else "Manual",
                 "metrics": metrics,
                 "signal_df": signal_df,
@@ -508,10 +731,9 @@ def render_single_backtest_dashboard():
                 "plotly_fig": plotly_fig,
                 "z_threshold": z_threshold,
                 "initial_capital": float(initial_capital),
-                "auto_loaded": is_auto_preloading,
             }
             st.session_state["bt_key"] = run_key
-        elif not is_auto_preloading:
+        else:
             st.error(
                 "❌ 回测失败：预测数据与历史数据无足够重叠，请检查控制台输出的错误信息，"
                 "或切换到 Auto 模式自动生成预测数据。",
@@ -524,12 +746,8 @@ def render_single_backtest_dashboard():
         st.stop()
 
     data = st.session_state["bt_data"]
-    if data.get("auto_loaded", False):
-        st.caption("⚡ 系统已自动命中缓存载入当前标的回测结果。如需修改参数重新计算，请点击左侧「🚀 运行 Pro 回测」。")
-    elif "bt_key" in st.session_state and st.session_state["bt_key"] != run_key:
+    if "bt_key" in st.session_state and st.session_state["bt_key"] != run_key:
         st.warning("⚠️ 检测到左侧配置参数已被修改（当前仍展示上一次回测结果）。请点击左侧「🚀 运行 Pro 回测」按钮以应用新参数运行。", icon="🔔")
-
-    data       = st.session_state["bt_data"]
     metrics    = data["metrics"]
     backtest_df= data["backtest_df"]
     signal_df  = data["signal_df"]
@@ -603,9 +821,11 @@ def render_single_backtest_dashboard():
                 act = t['action']
                 act_label = "🟢 买入建仓" if act == 'BUY' else "🔴 卖出平仓"
                 pnl_disp = f"{t['pnl_pct']:+.2%}" if act == 'SELL' else "-"
+                t_date = t.get('date', t.get('datetime', ''))
+                t_date_str = t_date.strftime('%Y-%m-%d %H:%M') if hasattr(t_date, 'strftime') else str(t_date)[:16]
                 summary_trades.append({
                     '序号': idx,
-                    '成交日期': t['date'].strftime('%Y-%m-%d'),
+                    '成交日期': t_date_str,
                     '操作动作': act_label,
                     '成交价': f"{cs}{t['price']:.3f}",
                     '持仓股数': f"{t['shares']:,}",

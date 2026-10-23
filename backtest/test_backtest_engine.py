@@ -170,13 +170,45 @@ class TestExitStateMachine(unittest.TestCase):
         self.assertIsNotNone(pending_reason)
         self.assertIn("移动止盈", pending_reason)
 
+    def test_trailing_stop_latch_memory(self):
+        """测试移动止盈常驻记忆 (Latch): 冲高达到 2% 激活线后回撤，即使当前浮盈回落至 <2% 依然能锁定止盈"""
+        pos = Position(
+            symbol="300418",
+            shares=1000,
+            avg_entry_price=100.0,
+            peak_price=103.0,   # 冲高到 103 (+3.0% >= 2.0% 激活线)
+            holding_bars=2,
+            target_horizon=7,
+            entry_bar_idx=0,
+            active_stop_pct=0.04,
+            active_trail_pct=0.025,
+            trailing_active=False,
+        )
+        # 收盘从 103 回撤至 100.3 (从峰值回撤 -2.62% > 2.5%)，当前浮盈仅 +0.3% (< 2.0%)
+        row = SimpleNamespace(
+            Index=pd.Timestamp("2026-01-08"),
+            close=100.3,
+            close_prev=102.5,
+            ma_fast=98.0,
+            exec_bearish=0,
+        )
+        pending_reason, _ = self.sm.evaluate_eod_exit(
+            row=row,
+            position=pos,
+            profile=self.profile_cn,
+            idx=2,
+        )
+        self.assertTrue(pos.trailing_active, "Latch 应当已锁定激活状态")
+        self.assertIsNotNone(pending_reason)
+        self.assertIn("移动止盈", pending_reason)
+
     def test_time_stop_model_falsified(self):
         """测试模型证伪时间止损（达到目标时界且处于浮亏）"""
         pos = Position(
             symbol="300418",
             shares=1000,
             avg_entry_price=20.0,
-            peak_price=20.5,
+            peak_price=20.2,   # 冲高仅到 20.2 (+1%)，未达到 2% 移动止盈激活线
             holding_bars=5,
             target_horizon=5,  # 达标持仓期
             entry_bar_idx=0,
@@ -231,6 +263,108 @@ class TestExitStateMachine(unittest.TestCase):
         self.assertIsNone(pending_reason)
         # 并且将 target_horizon 延长至最大持仓时界 10 日
         self.assertEqual(pos.target_horizon, 10)
+
+    def test_dynamic_atr_momentum_transition_high_vol(self):
+        """测试高波动股票动态 ATR 门限生效：回撤 -2.2% 在固定 1.5% 下被误杀，但在 0.8*ATR (2.8%) 下成功跃迁"""
+        pos = Position(
+            symbol="TSLA",
+            shares=100,
+            avg_entry_price=200.0,
+            peak_price=230.0,   # 最高到 230 (+15%)
+            holding_bars=5,
+            target_horizon=5,
+            entry_bar_idx=0,
+            active_stop_pct=0.05,
+            active_trail_pct=0.035,
+        )
+        # 收盘 224.94，高位回撤 (224.94 - 230) / 230 = -2.20%
+        # atr_pct = 0.035 (3.5%)，0.8 * 3.5% = 2.8%
+        # -2.2% >= -2.8%，在动态 ATR 下符合 is_near_high
+        row = SimpleNamespace(
+            Index=pd.Timestamp("2026-01-10"),
+            close=224.94,
+            close_prev=222.0,
+            ma_fast=215.0,
+            atr_pct=0.035,
+            exec_bearish=0,
+        )
+        pending_reason, _ = self.sm.evaluate_eod_exit(
+            row=row,
+            position=pos,
+            profile=self.profile_us,
+            idx=5,
+        )
+        self.assertIsNone(pending_reason)
+        self.assertEqual(pos.target_horizon, 10)
+        # 验证跃迁后移动止盈被收紧到 1.0 * ATR = 3.5%，且受 upper/lower bound 保护
+        self.assertAlmostEqual(pos.active_trail_pct, 0.035, places=3)
+
+    def test_anti_trap1_atr_expansion_cap(self):
+        """测试防范陷阱1（赶顶虚胖）：极端暴涨时 ATR 膨胀至 8%，移动止盈被严格截断在 4.2% 上限"""
+        pos = Position(
+            symbol="NVDA",
+            shares=100,
+            avg_entry_price=100.0,
+            peak_price=130.0,
+            holding_bars=5,
+            target_horizon=5,
+            entry_bar_idx=0,
+            active_stop_pct=0.05,
+            active_trail_pct=0.05,
+        )
+        # 极端赶顶，atr_pct 飙升至 8.0%
+        row = SimpleNamespace(
+            Index=pd.Timestamp("2026-01-10"),
+            close=126.0,  # 回撤 (126-130)/130 = -3.07%
+            close_prev=120.0,
+            ma_fast=115.0,
+            atr_pct=0.08,
+            exec_bearish=0,
+        )
+        pending_reason, _ = self.sm.evaluate_eod_exit(
+            row=row,
+            position=pos,
+            profile=self.profile_us,
+            idx=5,
+        )
+        # near_high_tol 上界封顶为 3.5%，-3.07% >= -3.5% 触发跃迁
+        self.assertIsNone(pending_reason)
+        # 移动止盈绝不允许跟随膨胀到 8.0%，而是被上界严格截断至 max_trail_pct = 0.042 (4.2%)
+        self.assertAlmostEqual(pos.active_trail_pct, 0.042, places=3)
+
+    def test_anti_trap2_whipsaw_floor(self):
+        """测试防范陷阱2（震荡磨损）：超低波标的 ATR 仅 0.8%，门限和止盈受保底下界保护"""
+        pos = Position(
+            symbol="600036",
+            shares=1000,
+            avg_entry_price=30.0,
+            peak_price=33.0,
+            holding_bars=5,
+            target_horizon=5,
+            entry_bar_idx=0,
+            active_stop_pct=0.03,
+            active_trail_pct=0.03,
+        )
+        # atr_pct 仅 0.8%
+        # 0.8 * 0.8% = 0.64%，若无下界保护会被 1% 的微小杂波误杀
+        # 但有了 min_near_high_pct = 1.5% 保底，回撤 -1.2% (32.604) 依然安全跃迁
+        row = SimpleNamespace(
+            Index=pd.Timestamp("2026-01-10"),
+            close=32.604,  # 回撤 (32.604-33)/33 = -1.20%
+            close_prev=32.5,
+            ma_fast=31.0,
+            atr_pct=0.008,
+            exec_bearish=0,
+        )
+        pending_reason, _ = self.sm.evaluate_eod_exit(
+            row=row,
+            position=pos,
+            profile=self.profile_cn,
+            idx=5,
+        )
+        self.assertIsNone(pending_reason)
+        # 移动止盈不会萎缩到 0.8%，而是被下界保底至 min_trail_pct = 0.018 (1.8%)
+        self.assertAlmostEqual(pos.active_trail_pct, 0.018, places=3)
 
 
 class TestSimulatedBroker(unittest.TestCase):

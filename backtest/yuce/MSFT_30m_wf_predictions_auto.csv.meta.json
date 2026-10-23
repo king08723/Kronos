@@ -1,0 +1,17 @@
+{
+  "stock_code": "MSFT",
+  "test_days": 200,
+  "lookback": 160,
+  "step_size": 1,
+  "sample_count": 35,
+  "forecast_horizon": "auto",
+  "max_auto_horizon": 8,
+  "temperature": 1.0,
+  "top_p": 0.9,
+  "min_down_quantile": 0.1,
+  "particle_filter": false,
+  "pf_val_window": 3,
+  "hist_last_date": "2026-10-22",
+  "n_hist": 1023,
+  "schema_version": 2
+}

@@ -155,7 +155,8 @@ class TestPortfolioCurve(unittest.TestCase):
                 'portfolio_value': [100.0, 105.0, 107.1],
             }).to_csv(os.path.join(hk, '00700_daily_backtest.csv'), index=False)
 
-            curve = calculate_portfolio_equity_curve(td)
+            curve_res = calculate_portfolio_equity_curve(td)
+            curve = curve_res[0] if isinstance(curve_res, tuple) else curve_res
             self.assertIsNotNone(curve)
             # 01-03 仅港股 +5%；01-04 等权 (10%+2%)/2 = 6%
             self.assertTrue(_approx(curve['Portfolio_Basket'].iloc[0], 1.05))

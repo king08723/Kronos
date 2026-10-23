@@ -42,6 +42,11 @@ class InteractiveVisualizer:
         cs = self.profile.currency_symbol
         cur = self.profile.currency
 
+        from ..core.timeframes import detect_timeframe
+        tf = detect_timeframe(backtest_df)
+        time_fmt = "%Y-%m-%d %H:%M" if tf.is_intraday else "%Y-%m-%d"
+        time_label = "时间" if tf.is_intraday else "日期"
+
         fig = make_subplots(
             rows=4, cols=1,
             shared_xaxes=True,
@@ -64,7 +69,7 @@ class InteractiveVisualizer:
                 mode='lines',
                 name='真实收盘价',
                 line=dict(color='#2980B9', width=2),
-                hovertemplate="<b>日期</b>: %{x|%Y-%m-%d}<br><b>收盘价</b>: " + cs + "%{y:.2f}<extra></extra>"
+                hovertemplate=f"<b>{time_label}</b>: %{{x|{time_fmt}}}<br><b>收盘价</b>: " + cs + "%{y:.2f}<extra></extra>"
             ),
             row=1, col=1
         )
@@ -76,7 +81,7 @@ class InteractiveVisualizer:
             b_prices = [t['price'] for t in buy_trades]
             b_texts = [f"买<br>{cs}{t['price']:.2f}" for t in buy_trades]
             b_hovers = [
-                f"<b>【买入开仓】</b><br>日期: {t['date'].strftime('%Y-%m-%d')}<br>成交价: {cs}{t['price']:.2f}<br>买入股数: {t.get('shares', 0)} 股<br>目标时界: {t.get('target_horizon', 'N/A')} 天"
+                f"<b>【买入开仓】</b><br>{time_label}: {t['date'].strftime(time_fmt) if hasattr(t['date'], 'strftime') else str(t['date'])}<br>成交价: {cs}{t['price']:.2f}<br>买入股数: {t.get('shares', 0)} 股<br>目标时界: {t.get('target_horizon', 'N/A')} 天"
                 for t in buy_trades
             ]
             fig.add_trace(
@@ -120,7 +125,7 @@ class InteractiveVisualizer:
                 s_texts.append(f"卖({t['pnl_pct']:+.1%})<br>[{short_reason}]<br>{cs}{t['price']:.2f}")
                 s_hovers.append(
                     f"<b>【卖出平仓】</b><br>"
-                    f"日期: {t['date'].strftime('%Y-%m-%d')}<br>"
+                    f"{time_label}: {t['date'].strftime(time_fmt) if hasattr(t['date'], 'strftime') else str(t['date'])}<br>"
                     f"平仓价: {cs}{t['price']:.2f}<br>"
                     f"单笔盈亏: {t['pnl_pct']:+.2%}<br>"
                     f"触发原因: {t.get('reason', 'N/A')}<br>"
@@ -224,7 +229,7 @@ class InteractiveVisualizer:
                 name='水下回撤',
                 line=dict(color='#E74C3C', width=1.2),
                 fillcolor='rgba(231, 76, 60, 0.35)',
-                hovertemplate="<b>日期</b>: %{x|%Y-%m-%d}<br><b>回撤幅度</b>: %{y:.2%}<extra></extra>"
+                hovertemplate=f"<b>{time_label}</b>: %{{x|{time_fmt}}}<br><b>回撤幅度</b>: %{{y:.2%}}<extra></extra>"
             ),
             row=3, col=1
         )

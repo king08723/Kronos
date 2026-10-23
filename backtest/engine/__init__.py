@@ -6,3 +6,4 @@ backtest/engine
 from .metrics import MetricsEvaluator
 from .skill_evaluator import SkillEvaluator
 from .backtest_engine import BacktestEngine, KronosBacktesterPro
+from .parameter_plateau import ParameterPlateauOptimizer

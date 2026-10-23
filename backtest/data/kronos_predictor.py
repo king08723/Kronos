@@ -16,6 +16,7 @@ from typing import Union, Optional, List, Dict, Tuple, Any
 import numpy as np
 import pandas as pd
 
+from ..core.types import TimeFrame
 from ..core.market_rules import SymbolResolver
 from .cache import CacheManager
 from .data_fetcher import DataFetcher, _import_data_utils
@@ -491,41 +492,10 @@ class KronosDataFetcher:
         history_days: int = 400,
         market: str = None,
         force_refresh: bool = False,
+        timeframe: str = "1d",
     ) -> pd.DataFrame:
         """
-        拉取历史日K线数据并标准化为 KronosBacktesterPro 所需格式。
-
-        参数示例 (Parameters)
-        --------------------
-        stock_code : str
-            股票代码，示例: '300418' (A股代码) 或 'AAPL' (美股代码)
-        data_dir : str
-            数据存储目录路径，示例: './examples/data'
-        history_days : int, default=400
-            拉取回溯自然天数 (转换为交易日通常约为 history_days * 5/7)，示例: 400
-        market : str, optional
-            市场类型，'sz' (深市) / 'sh' (沪市) / 'us' (美股)，None 则自动推断
-        force_refresh : bool, default=False
-            是否强制绕过本地缓存重新调用 API 下载行情
-
-        返回值数据结构与示例 (Returns: pd.DataFrame)
-        ------------------------------------------
-        索引: pd.DatetimeIndex (名称为 'date', 单调递增)
-        数据列:
-            - open   (float64): 当日开盘价 (元)
-            - high   (float64): 当日最高价 (元)
-            - low    (float64): 当日最低价 (元)
-            - close  (float64): 当日收盘价 (元)
-            - volume (float64): 成交量 (股 / 手)
-            - amount (float64): 成交金额 (元)
-
-        DataFrame 结构示例:
-        >>> print(df.head(3))
-                                  open    high     low   close       volume          amount
-        date                                                                               
-        2025-01-02 00:00:00  25.1000  26.300  24.800  25.900  1,250,000.0   32,150,000.00
-        2025-01-03 00:00:00  25.8000  26.500  25.500  26.200  1,400,000.0   36,400,000.00
-        2025-01-06 00:00:00  26.3000  27.100  26.000  26.850  1,820,000.0   48,550,000.00
+        拉取历史行情数据 (支持日线及 1m/5m/15m/30m/60m 分时) 并标准化为 KronosBacktesterPro 所需格式。
         """
         clean_code, det_market, prefix = SymbolResolver.resolve(stock_code, market=market)
 
@@ -538,7 +508,48 @@ class KronosDataFetcher:
         )
         normalized_code = norm_code if is_valid else clean_code
 
-        # 统一走 fetch_or_load_stock_data：内含缓存新鲜度判定，禁止模拟 K 线进入回测
+        # 分时行情分支 (30m, 60m, 15m, 5m, 1m)
+        if timeframe and timeframe != "1d":
+            from .data_fetcher import DataFetcher
+            tf_obj = TimeFrame.from_str(timeframe)
+            market_label = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
+            print(f"\n📡 获取 [{market_label}] {normalized_code} ({tf_obj.label}) 历史分时行情...")
+            res = DataFetcher.fetch_intraday_history(
+                stock_code=normalized_code,
+                timeframe=tf_obj,
+                market=det_market,
+                save_dir=data_dir,
+                force_refresh=force_refresh,
+            )
+            if res is None:
+                raise ValueError(
+                    f"未能获取 {normalized_code} ({tf_obj.label}) 的真实分时行情数据，请检查网络或股票代码。"
+                )
+            raw_df, _ = res
+            df = prepare_stock_data(raw_df, normalized_code)
+
+            # 转换为回测引擎标准格式（DatetimeIndex + 标准列名）
+            df = df.rename(columns={'timestamps': 'date'})
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.set_index('date').sort_index()
+            elif not isinstance(df.index, pd.DatetimeIndex):
+                df.index = pd.to_datetime(df.index)
+                df.index.name = 'date'
+
+            if df.index.has_duplicates:
+                df = df[~df.index.duplicated(keep='last')]
+
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            if 'amount' not in df.columns and 'volume' in df.columns:
+                df['amount'] = df['close'] * df['volume']
+
+            print(f"✅ 历史分时行情: {df.index.min()} → {df.index.max()} ({len(df)} 条)")
+            return df
+
+        # 日线统一走 fetch_or_load_stock_data：内含缓存新鲜度判定，禁止模拟 K 线进入回测
         market_label = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
         print(f"\n📡 获取 [{market_label}] {normalized_code} 历史行情（{history_days} 天，"
               f"{'强制刷新' if force_refresh else '时效缓存'}）...")
@@ -576,9 +587,9 @@ class KronosDataFetcher:
         stock_code: str,
         output_dir: str,
         test_days: int = 120,
-        lookback: int = 120,
-        step_size: int = 2,
-        sample_count: int = 20,
+        lookback: int = 90,
+        step_size: int = 1,
+        sample_count: int = 35,
         temperature: float = 1.0,
         top_p: float = 0.9,
         forecast_horizon: Union[int, str] = 'auto',
@@ -589,6 +600,9 @@ class KronosDataFetcher:
         pf_val_window: int = 3,
         pf_temperature: float = None,
         market: str = None,
+        test_bars: Optional[int] = None,
+        lookback_bars: Optional[int] = None,
+        timeframe: Optional[str] = "1d",
     ) -> pd.DataFrame:
         """
         Walk-Forward 逐步滚动预测，生成覆盖回测窗口的样本外多时界/自适应极值预测序列。
@@ -604,13 +618,12 @@ class KronosDataFetcher:
             预测 CSV 输出目录，示例: './examples/yuce'
         test_days : int, default=120
             回测验证窗口长度（最后 N 个交易日，默认半年 120 交易日）, 示例: 120
-        lookback : int, default=120
-            每次预测使用的历史窗口长度（交易日数）, 示例: 120
-        step_size : int, default=2
-            滑动步长（1=最精确逐日预测，2=加速跳步预测+线性插值推荐）, 示例: 2
-        sample_count : int, default=20
-            蒙特卡洛采样路径数。需要 >= 20 才能支撑分位数估计（P3 修正前默认为 3，
-            用 3 条样本计算 90/10 分位不具统计意义）, 示例: 20
+        lookback : int, default=90
+            每次预测使用的历史窗口长度（交易日数）, 示例: 90
+        step_size : int, default=1
+            滑动步长（1=最精确逐根/逐日预测，>1=跳步预测并线性插值加速）, 示例: 1
+        sample_count : int, default=35
+            蒙特卡洛采样路径数。推荐 >= 35 支撑高精度分位数与粒子滤波估计, 示例: 35
         temperature : float, default=1.0
             生成温度系数，示例: 1.0
         top_p : float, default=0.9
@@ -639,6 +652,12 @@ class KronosDataFetcher:
         * pred_expected —— 动态最优时界（optimal_horizon）当天的跨路径加权期望收盘价（无偏）。用于**入场判定**。
         * pred_path_max —— 路径最大值（最大值统计量，结构性正偏）。仅用于**止盈目标**。
         """
+        # 兼容 Bar 数量与天数参数：统一以 K 线根数 (Bars) 作为序列切分操作单位
+        test_bars = test_bars if test_bars is not None else test_days
+        lookback_bars = lookback_bars if lookback_bars is not None else lookback
+        test_days = test_bars
+        lookback = lookback_bars
+
         is_auto_horizon = (
             forecast_horizon == 'auto'
             or (isinstance(forecast_horizon, str) and forecast_horizon.lower() == 'auto')
@@ -655,30 +674,69 @@ class KronosDataFetcher:
 
         clean_code, det_market, prefix = SymbolResolver.resolve(stock_code, market=market)
 
-        # 优先检查本地是否已有对应时界的 Walk-Forward 预测缓存
+        # 周期前缀隔离 (30m, 15m, 60m 等独立命名，避免不同粒度缓存互相踩踏覆写)
+        tf_tag = ""
+        if timeframe and str(timeframe).lower() not in ("1d", "none"):
+            tf_tag = f"_{str(timeframe).lower()}"
+
+        # 优先检查本地是否已有对应时界与周期的 Walk-Forward 预测缓存
+        out_candidates = []
+        if tf_tag:
+            if particle_filter:
+                out_candidates.extend([
+                    os.path.join(output_dir, f"{clean_code}{tf_tag}_wf_predictions{cache_suffix}.csv"),
+                    os.path.join(output_dir, f"{prefix}{tf_tag}_wf_predictions{cache_suffix}.csv"),
+                ])
+            else:
+                out_candidates.extend([
+                    os.path.join(output_dir, f"{clean_code}{tf_tag}_wf_predictions{cache_suffix}.csv"),
+                    os.path.join(output_dir, f"{prefix}{tf_tag}_wf_predictions{cache_suffix}.csv"),
+                    os.path.join(output_dir, f"{clean_code}{tf_tag}_wf_predictions.csv"),
+                    os.path.join(output_dir, f"{prefix}{tf_tag}_wf_predictions.csv"),
+                ])
+        # 兼容无周期前缀的默认/历史文件
         if particle_filter:
-            out_candidates = [
+            out_candidates.extend([
                 os.path.join(output_dir, f"{clean_code}_wf_predictions{cache_suffix}.csv"),
                 os.path.join(output_dir, f"{prefix}_wf_predictions{cache_suffix}.csv"),
-            ]
+            ])
         else:
-            out_candidates = [
+            out_candidates.extend([
                 os.path.join(output_dir, f"{clean_code}_wf_predictions{cache_suffix}.csv"),
                 os.path.join(output_dir, f"{prefix}_wf_predictions{cache_suffix}.csv"),
                 os.path.join(output_dir, f"{clean_code}_wf_predictions.csv"),
                 os.path.join(output_dir, f"{prefix}_wf_predictions.csv"),
-            ]
+            ])
+
         target_path = next((p for p in out_candidates if os.path.exists(p)), out_candidates[0])
-        out_path = os.path.join(output_dir, f"{clean_code}_wf_predictions{cache_suffix}.csv")
+        out_path = os.path.join(output_dir, f"{clean_code}{tf_tag}_wf_predictions{cache_suffix}.csv")
+
+        # 严格防御：保证 hist_df.index 为 DatetimeIndex
+        if not isinstance(hist_df.index, pd.DatetimeIndex):
+            hist_work = hist_df.copy()
+            date_col = 'date' if 'date' in hist_work.columns else (
+                'timestamps' if 'timestamps' in hist_work.columns else None
+            )
+            if date_col:
+                hist_work[date_col] = pd.to_datetime(hist_work[date_col])
+                hist_work = hist_work.set_index(date_col).sort_index()
+            else:
+                hist_work.index = pd.to_datetime(hist_work.index)
+                hist_work.index.name = 'date'
+            if hist_work.index.has_duplicates:
+                hist_work = hist_work[~hist_work.index.duplicated(keep='last')]
+            hist_df = hist_work
 
         # P4：缓存命中必须同时满足「行数足够」与「参数指纹一致」。
+        max_dt = hist_df.index.max()
+        hist_last_date_str = str(max_dt.date() if hasattr(max_dt, 'date') else max_dt)
         expected_fp = self._build_fingerprint(
             stock_code=clean_code, test_days=test_days, lookback=lookback,
             step_size=step_size, sample_count=sample_count,
             forecast_horizon=forecast_horizon, max_auto_horizon=max_auto_horizon,
             temperature=temperature, top_p=top_p, min_down_quantile=min_down_quantile,
             particle_filter=particle_filter, pf_val_window=pf_val_window,
-            hist_last_date=str(hist_df.index.max().date()), n_hist=len(hist_df),
+            hist_last_date=hist_last_date_str, n_hist=len(hist_df),
         )
 
         if not force_refresh and os.path.exists(target_path):
@@ -708,8 +766,8 @@ class KronosDataFetcher:
 
         if len(hist_df) < lookback + test_days:
             raise ValueError(
-                f"历史数据不足：需要至少 {lookback + test_days} 个交易日，"
-                f"实际只有 {len(hist_df)} 个。请增大 history_days 或减小 test_days/lookback。"
+                f"历史数据不足：需要至少 {lookback + test_days} 根 K 线 (Bar)，"
+                f"实际只有 {len(hist_df)} 根。请增大 history_days 或减小 test_bars/lookback_bars。"
             )
 
         # 针对并发场景进行 GPU/MPS 推理互斥保护（避免 Apple Silicon Metal 驱动 MTLCommandBuffer 并发断言崩溃）
@@ -743,11 +801,15 @@ class KronosDataFetcher:
             test_dates = test_df.index.tolist()
 
             mkt_tag = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
-            horizon_label = f"Auto (最大探测={eval_horizon}天)" if is_auto_horizon else f"固定={eval_horizon}天"
+            horizon_label = f"Auto (最大探测={eval_horizon}步)" if is_auto_horizon else f"固定={eval_horizon}步"
+            tr_min = train_df.index.min().date() if hasattr(train_df.index.min(), 'date') else str(train_df.index.min())
+            tr_max = train_df.index.max().date() if hasattr(train_df.index.max(), 'date') else str(train_df.index.max())
+            te_min = test_df.index.min().date() if hasattr(test_df.index.min(), 'date') else str(test_df.index.min())
+            te_max = test_df.index.max().date() if hasattr(test_df.index.max(), 'date') else str(test_df.index.max())
             print(f"\n📈 Walk-Forward 预测配置 [{mkt_tag} {clean_code}] (时界模式: {horizon_label}):")
-            print(f"   训练区间: {train_df.index.min().date()} → {train_df.index.max().date()} ({len(train_df)} 日)")
-            print(f"   回测区间: {test_df.index.min().date()} → {test_df.index.max().date()} ({len(test_df)} 日)")
-            print(f"   lookback={lookback}, step_size={step_size}, sample_count={sample_count}")
+            print(f"   训练区间: {tr_min} → {tr_max} ({len(train_df)} 根 Bar)")
+            print(f"   回测区间: {te_min} → {te_max} ({len(test_df)} 根 Bar)")
+            print(f"   lookback_bars={lookback}, step_size={step_size}, sample_count={sample_count}")
 
             # 准备 OHLCV 数据列（Kronos 标准输入）
             feature_cols = ['open', 'high', 'low', 'close', 'volume', 'amount']
@@ -765,11 +827,16 @@ class KronosDataFetcher:
 
             for seq_idx, anchor_idx in enumerate(anchor_indices):
                 target_date = test_dates[anchor_idx]
+                target_date_str = (
+                    target_date.strftime('%Y-%m-%d %H:%M')
+                    if hasattr(target_date, 'hour') and (target_date.hour != 0 or target_date.minute != 0)
+                    else (target_date.strftime('%Y-%m-%d') if hasattr(target_date, 'strftime') else str(target_date))
+                )
 
-                # 输入窗口：target_date 之前的 lookback 个交易日
+                # 输入窗口：target_date 之前的 lookback 个 Bar
                 all_up_to_target = hist_df[hist_df.index < target_date]
                 if len(all_up_to_target) < lookback:
-                    print(f"   ⚠️ {target_date.date()} 前历史不足 {lookback} 日，跳过")
+                    print(f"   ⚠️ {target_date_str} 前历史不足 {lookback} 根 Bar，跳过")
                     continue
 
                 # -------------------------------------------------------------
@@ -823,7 +890,7 @@ class KronosDataFetcher:
                     top_p=top_p,
                 )
                 if paths is None:
-                    print(f"   ⚠️ 预测失败，跳过 [{target_date.date()}]")
+                    print(f"   ⚠️ 预测失败，跳过 [{target_date_str}]")
                     continue
 
                 # -------------------------------------------------------------
@@ -864,9 +931,10 @@ class KronosDataFetcher:
 
                 elapsed = time.time() - t0
                 opt_horizon = int(rec['optimal_horizon'])
-                opt_str = f" [动态波峰 H*={opt_horizon}日]" if is_auto_horizon else ""
+                unit_label = "Bar" if hasattr(target_date, 'hour') and (target_date.hour != 0 or target_date.minute != 0) else "日"
+                opt_str = f" [动态波峰 H*={opt_horizon}{unit_label}]" if is_auto_horizon else ""
                 pf_str = f" [粒子置信={rec['pf_confidence']:.1%}, 误差={rec['pf_val_error']:.2%}]" if use_pf_this_step else ""
-                print(f"   [{seq_idx+1}/{len(anchor_indices)}] {target_date.date()} "
+                print(f"   [{seq_idx+1}/{len(anchor_indices)}] {target_date_str} "
                       f"期望={rec['pred_expected']:.3f} 波峰={rec['pred_path_max']:.3f}"
                       f"(溢价{rec['peak_premium']*100:+.1f}%){opt_str}{pf_str} "
                       f"(斜率={rec['pred_slope']*100:+.2f}%) "
@@ -898,6 +966,13 @@ class KronosDataFetcher:
                             for k in metric_keys
                         }
 
+            def _format_pred_dt(d):
+                if hasattr(d, 'hour') and (d.hour != 0 or d.minute != 0 or d.second != 0):
+                    return d.strftime('%Y-%m-%d %H:%M:%S')
+                elif hasattr(d, 'strftime'):
+                    return d.strftime('%Y-%m-%d')
+                return str(d)
+
             # 构建输出 DataFrame
             sorted_dates = sorted(pred_records.keys())
             quantile_label = (f"样本{sample_count}条_90分位" if sample_count >= 20
@@ -905,7 +980,7 @@ class KronosDataFetcher:
             lower_label = (f"样本{sample_count}条_10分位" if sample_count >= 20
                            else f"样本{sample_count}条_极小值")
             pred_df = pd.DataFrame({
-                '日期':             [d.strftime('%Y-%m-%d') for d in sorted_dates],
+                '日期':             [_format_pred_dt(d) for d in sorted_dates],
                 # 入场判定用（无偏期望值）
                 '预测期望收盘价':   [pred_records[d]['pred_expected'] for d in sorted_dates],
                 # 止盈目标用（路径最大值，结构性正偏，禁止用于入场）
@@ -930,19 +1005,23 @@ class KronosDataFetcher:
             # 保存 CSV + 参数指纹（P4：防止参数变更后静默复用旧缓存）
             os.makedirs(output_dir, exist_ok=True)
             pred_df.to_csv(out_path, index=False, encoding='utf-8-sig')
+            max_dt_end = hist_df.index.max()
+            hist_last_date_end = str(max_dt_end.date() if hasattr(max_dt_end, 'date') else max_dt_end)
             self._write_cache_fingerprint(out_path, self._build_fingerprint(
                 stock_code=stock_code, test_days=test_days, lookback=lookback,
                 step_size=step_size, sample_count=sample_count,
                 forecast_horizon=forecast_horizon, max_auto_horizon=max_auto_horizon,
                 temperature=temperature, top_p=top_p, min_down_quantile=min_down_quantile,
                 particle_filter=particle_filter, pf_val_window=pf_val_window,
-                hist_last_date=str(hist_df.index.max().date()), n_hist=len(hist_df),
+                hist_last_date=hist_last_date_end, n_hist=len(hist_df),
             ))
 
             interp_cnt = sum(1 for d in sorted_dates if d not in anchor_date_set)
+            d_start = sorted_dates[0].date() if hasattr(sorted_dates[0], 'date') else str(sorted_dates[0])
+            d_end = sorted_dates[-1].date() if hasattr(sorted_dates[-1], 'date') else str(sorted_dates[-1])
             print(f"\n✅ Walk-Forward 预测完成，结果已保存: {out_path}")
-            print(f"   覆盖 {len(sorted_dates)} 个交易日 "
-                  f"({sorted_dates[0].date()} → {sorted_dates[-1].date()})")
+            print(f"   覆盖 {len(sorted_dates)} 根 K 线 (Bar) "
+                  f"({d_start} → {d_end})")
             print(f"   真实推理 {len(sorted_dates) - interp_cnt} 条，插值填充 {interp_cnt} 条，"
                   f"每条 {sample_count} 采样路径")
             if interp_cnt > 0:
@@ -966,9 +1045,9 @@ class KronosDataFetcher:
         pred_output_dir: str,
         history_days: int = 700,
         test_days: int = 120,
-        lookback: int = 120,
+        lookback: int = 90,
         step_size: int = 1,
-        sample_count: int = 20,
+        sample_count: int = 35,
         forecast_horizon: Union[int, str] = 'auto',
         max_auto_horizon: int = 10,
         market: str = None,
@@ -977,6 +1056,9 @@ class KronosDataFetcher:
         particle_filter: bool = False,
         pf_val_window: int = 3,
         pf_temperature: float = None,
+        test_bars: Optional[int] = None,
+        lookback_bars: Optional[int] = None,
+        timeframe: str = "1d",
     ) -> tuple:
         """
         一键自动管线：拉取行情 → Walk-Forward 预测（可配置粒子滤波） → 返回 (hist_df, pred_df)
@@ -987,6 +1069,7 @@ class KronosDataFetcher:
         market_label = {'CN': 'A股', 'HK': '港股', 'US': '美股'}.get(det_market, det_market)
         print(f"\n{'='*60}")
         print(f"🚀 启动 Kronos 自动管线: [{market_label}] {clean_code}"
+              f" [周期: {timeframe}]"
               f"{' [粒子滤波重分配开启]' if particle_filter else ''}")
         print(f"{'='*60}")
 
@@ -997,6 +1080,7 @@ class KronosDataFetcher:
             history_days=history_days,
             market=det_market,
             force_refresh=force_refresh,
+            timeframe=timeframe,
         )
 
         # 2. Walk-Forward 预测
@@ -1016,6 +1100,9 @@ class KronosDataFetcher:
             pf_val_window=pf_val_window,
             pf_temperature=pf_temperature,
             market=det_market,
+            test_bars=test_bars,
+            lookback_bars=lookback_bars,
+            timeframe=timeframe,
         )
 
         return hist_df, pred_df

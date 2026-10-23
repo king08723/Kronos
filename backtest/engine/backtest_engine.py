@@ -22,6 +22,7 @@ import pandas as pd
 
 from ..core.types import TimeFrame, Position
 from ..core.market_rules import SymbolResolver, MarketProfile
+from ..core.timeframes import detect_timeframe, resolve_timeframe_params, get_timeframe_defaults
 from ..core.logger import attach_stock_logger, detach_stock_logger, clear_logs
 from ..execution.sizer import RiskBudgetSizer
 from ..execution.risk_manager import ExitStateMachine
@@ -161,13 +162,29 @@ class KronosBacktesterPro:
     # 1. 数据加载
     # ------------------------------------------------------------------
 
-    def load_data(self, stock_code: str, particle_filter: bool = False) -> tuple:
+    def load_data(
+        self,
+        stock_code: str,
+        particle_filter: bool = False,
+        timeframe: Optional[Union[str, TimeFrame]] = None,
+    ) -> tuple:
         """加载并标准化历史行情与模型预测数据"""
         clean_code, det_market, _ = SymbolResolver.resolve(stock_code, market=self.profile.market)
         if self.profile.market != det_market:
             self.set_market(clean_code, market=det_market, log_dir=self.log_dir, enable_log=self.enable_log)
-        hist_df, _ = DataFetcher.load_stock_history(stock_code, data_dir=self.data_dir, market=self.profile.market)
-        pred_df = DataFetcher.load_prediction_data(stock_code, model_dir=self.model_dir, market=self.profile.market, particle_filter=particle_filter)
+        hist_df, _ = DataFetcher.load_stock_history(
+            stock_code,
+            data_dir=self.data_dir,
+            market=self.profile.market,
+            timeframe=timeframe,
+        )
+        pred_df = DataFetcher.load_prediction_data(
+            stock_code,
+            model_dir=self.model_dir,
+            market=self.profile.market,
+            particle_filter=particle_filter,
+            timeframe=timeframe,
+        )
         return hist_df, pred_df
 
     def align_and_generate_signals(self, hist_df: pd.DataFrame, pred_df: pd.DataFrame, **kwargs) -> pd.DataFrame:
@@ -227,10 +244,10 @@ class KronosBacktesterPro:
     def run_backtest_engine(
         self,
         df: pd.DataFrame,
-        hard_stop_loss: float = 0.04,
-        trailing_stop: float = 0.025,
-        trailing_stop_min_profit: float = 0.02,
-        max_holding_days: int = 5,
+        hard_stop_loss: Optional[float] = None,
+        trailing_stop: Optional[float] = None,
+        trailing_stop_min_profit: Optional[float] = None,
+        max_holding_days: Optional[int] = None,
         min_lot_guarantee: bool = True,
         risk_per_trade: float = 0.01,
         max_position_pct: float = 0.80,
@@ -240,30 +257,71 @@ class KronosBacktesterPro:
         max_stop: float = 0.12,
         intraday_stop: bool = True,
         consecutive_loss_cut: int = 2,
+        k_near_high_atr: float = 0.8,
+        k_trail_atr: float = 1.0,
+        min_near_high_pct: float = 0.015,
+        max_near_high_pct: float = 0.035,
+        min_trail_pct: float = 0.018,
+        max_trail_pct: float = 0.042,
+        volume_participation_cap: Optional[float] = None,
+        slippage_model: Optional[str] = None,
+        slippage_impact_coef: float = 0.1,
+        max_slippage: float = 0.02,
+        intraday_exit_at_eod: Optional[bool] = None,
+        overnight_gap_protection: Optional[bool] = None,
+        auto_adapt_params: bool = True,
     ) -> tuple:
         """
-        逐日仿真撮合引擎（状态机）。
+        逐日/逐Bar 仿真撮合引擎（状态机）。
+        若参数为 None，依据当前 DataFrame 自动推断周期并自适应注入量化最佳实践默认值。
+        """
+        profile = self.profile
+
+        if auto_adapt_params and (
+            hard_stop_loss is None or trailing_stop is None or max_holding_days is None
+            or slippage_model is None or intraday_exit_at_eod is None or overnight_gap_protection is None
+        ):
+            tf = detect_timeframe(df)
+            adaptive_cfg = resolve_timeframe_params(
+                timeframe=tf,
+                market=profile.market,
+                overrides={
+                    'hard_stop': hard_stop_loss,
+                    'trail_stop': trailing_stop,
+                    'max_hold': max_holding_days,
+                    'volume_participation_cap': volume_participation_cap,
+                    'slippage_model': slippage_model,
+                    'intraday_exit_at_eod': intraday_exit_at_eod,
+                    'overnight_gap_protection': overnight_gap_protection,
+                },
+                auto_adapt=True,
+            )
+            hard_stop_loss = adaptive_cfg['hard_stop']
+            trailing_stop = adaptive_cfg['trail_stop']
+            trailing_stop_min_profit = adaptive_cfg['trailing_stop_min_profit'] if trailing_stop_min_profit is None else trailing_stop_min_profit
+            max_holding_days = adaptive_cfg['max_hold']
+            if volume_participation_cap is None and 'volume_participation_cap' in adaptive_cfg:
+                volume_participation_cap = adaptive_cfg['volume_participation_cap']
+            slippage_model = adaptive_cfg['slippage_model']
+            intraday_exit_at_eod = adaptive_cfg['intraday_exit_at_eod']
+            overnight_gap_protection = adaptive_cfg['overnight_gap_protection']
+        else:
+            hard_stop_loss = 0.04 if hard_stop_loss is None else hard_stop_loss
+            trailing_stop = 0.025 if trailing_stop is None else trailing_stop
+            trailing_stop_min_profit = 0.02 if trailing_stop_min_profit is None else trailing_stop_min_profit
+            max_holding_days = 15 if max_holding_days is None else max_holding_days
+            slippage_model = 'fixed' if slippage_model is None else slippage_model
+            intraday_exit_at_eod = False if intraday_exit_at_eod is None else intraday_exit_at_eod
+            overnight_gap_protection = True if overnight_gap_protection is None else overnight_gap_protection
+        """
+        逐日/逐Bar 仿真撮合引擎（状态机）。
 
         【撮合规则设计】
-        - 开仓/平仓撮合价格：使用当日开盘价（open）乘滑点 (1 ± slippage_rate)。
-          因为 exec_signal / pending_close_reason 是前一日收盘后计算出的决策，在今日开盘立即撮合。
-        - 每日盯市结算（Mark-to-Market）：以当日真实收盘价 close 结算总账户资产 portfolio_value。
+        - 开仓/平仓撮合价格：使用当日/当前Bar开盘价（open）乘滑点 (1 ± eff_slippage)。
+          因为 exec_signal / pending_close_reason 是前一根 Bar 计算出的决策，在今日/当前Bar开盘立即撮合。
+        - 每日盯市结算（Mark-to-Market）：以当前真实收盘价 close 结算总账户资产 portfolio_value。
         - 交易约束：多市场制度全真建模（A股100股整手/港股自定义每手/美股1股，T+1/T+0，印花税及交易所规费）。
-
-        参数示例 (Parameters)
-        --------------------
-        df : pd.DataFrame
-            信号对齐矩阵（由 align_and_generate_signals 产出，含 open/close/exec_signal 等列）
-        hard_stop_loss : float, default=0.04
-            可配置硬止损线（相比成本价）。示例: 0.04 表示亏损达 -4.0% 时止损
-        trailing_stop : float, default=0.025
-            移动止盈回撤阈值。示例: 0.025 表示自持仓期间最高价回撤 -2.5% 时离场
-        trailing_stop_min_profit : float, default=0.02
-            移动止盈启动门槛。示例: 0.02 表示必须在浮盈超过 +2.0% 后才激活峰值回撤止盈
-        max_holding_days : int, default=5
-            单笔交易最大持仓天数。示例: 5 表示持满 5 个交易日必须平仓
-        min_lot_guarantee : bool, default=True
-            一手保底机制。若风险预算计算股数经每手截断为 0，但在资金和仓位上限允许时保底买入 1 手。
+        - 流动性与冲击成本：单 Bar 成交量占比上限 (volume_participation_cap) 与冲击滑点 (slippage_model)。
         """
         profile = self.profile
         code_tag = f"[{self.current_stock_code}] " if getattr(self, 'current_stock_code', None) else ""
@@ -274,6 +332,11 @@ class KronosBacktesterPro:
             profile=profile,
             initial_capital=self.initial_capital,
             slippage_rate=self.slippage_rate,
+            volume_participation_cap=volume_participation_cap,
+            slippage_model=slippage_model,
+            slippage_impact_coef=slippage_impact_coef,
+            max_slippage=max_slippage,
+            min_lot_guarantee=min_lot_guarantee,
         )
         sizer = RiskBudgetSizer(
             risk_per_trade=risk_per_trade,
@@ -291,6 +354,14 @@ class KronosBacktesterPro:
             trailing_stop_min_profit=trailing_stop_min_profit,
             max_holding_days=max_holding_days,
             intraday_stop=intraday_stop,
+            k_near_high_atr=k_near_high_atr,
+            k_trail_atr=k_trail_atr,
+            min_near_high_pct=min_near_high_pct,
+            max_near_high_pct=max_near_high_pct,
+            min_trail_pct=min_trail_pct,
+            max_trail_pct=max_trail_pct,
+            intraday_exit_at_eod=intraday_exit_at_eod,
+            overnight_gap_protection=overnight_gap_protection,
         )
 
         position = broker.get_position(self.current_stock_code or profile.market)
@@ -298,8 +369,25 @@ class KronosBacktesterPro:
         pending_close_reason = None
         pending_close_price = None
 
-        records = []
+        n_rows = len(df)
+        pv_arr = np.zeros(n_rows, dtype=float)
+        cash_arr = np.zeros(n_rows, dtype=float)
+        shares_arr = np.zeros(n_rows, dtype=int)
+        close_arr = np.zeros(n_rows, dtype=float)
+        signal_arr = np.zeros(n_rows, dtype=int)
+
         rows = list(df.itertuples(index=True))
+
+        # 预先向量化计算跨日切分标识 (消除循环内数万次 hasattr 和 date 比较)
+        if isinstance(df.index, pd.DatetimeIndex) and n_rows > 0:
+            day_arr = df.index.date
+            is_last_bar_arr = np.empty(n_rows, dtype=bool)
+            is_last_bar_arr[:-1] = (day_arr[:-1] != day_arr[1:])
+            is_last_bar_arr[-1] = True
+        else:
+            is_last_bar_arr = np.zeros(n_rows, dtype=bool)
+            if n_rows > 0:
+                is_last_bar_arr[-1] = True
 
         for idx, row in enumerate(rows):
             date = row.Index
@@ -317,13 +405,16 @@ class KronosBacktesterPro:
             exec_signal = int(row.exec_signal)
             limit_down = int(getattr(row, 'open_limit_down', getattr(row, 'limit_down', 0)))
             limit_up = int(getattr(row, 'open_limit_up', getattr(row, 'limit_up', 0)))
+            bar_vol = getattr(row, 'volume', None)
+            is_last_bar = is_last_bar_arr[idx]
 
             # ----------------------------------------------------------------
             # A. 执行上一交易日决定的平仓指令
             # ----------------------------------------------------------------
             if pending_close_reason and position.is_open:
                 if limit_down:
-                    logger.info(f"[{date.date()}] {code_tag}⛔ 开盘封跌停无法卖出，平仓指令顺延: 【{pending_close_reason}】")
+                    if self.enable_log:
+                        logger.info(f"[{date.date() if hasattr(date, 'date') else date}] {code_tag}⛔ 开盘封跌停无法卖出，平仓指令顺延: 【{pending_close_reason}】")
                 else:
                     fill = min(pending_close_price, open_price) if pending_close_price is not None else open_price
                     cash, fee, trade_pnl, pnl_amount = broker.execute_sell(
@@ -332,8 +423,12 @@ class KronosBacktesterPro:
                         position=position,
                         fill_price=fill,
                         reason=pending_close_reason,
-                        holding_days=position.holding_bars,
+                        holding_days=position.holding_days,
+                        holding_bars=position.holding_bars,
                         stock_code_tag=code_tag,
+                        bar_volume=bar_vol,
+                        bar_high=high_price,
+                        bar_low=low_price,
                     )
                     consecutive_losses = consecutive_losses + 1 if trade_pnl <= 0 else 0
                     pending_close_reason = None
@@ -376,19 +471,20 @@ class KronosBacktesterPro:
                         low_price=low_price,
                         active_trail_pct=active_trail_pct,
                         stock_code_tag=code_tag,
+                        bar_volume=bar_vol,
+                        bar_high=high_price,
                     )
                     if pos:
                         position = pos
             elif not position.is_open and exec_signal == 1 and limit_up:
-                logger.info(f"[{date.date()}] {code_tag}⛔ 开盘封涨停无法买入，放弃本次开仓信号")
+                if self.enable_log:
+                    logger.info(f"[{date.date() if hasattr(date, 'date') else date}] {code_tag}⛔ 开盘封涨停无法买入，放弃本次开仓信号")
 
             # ----------------------------------------------------------------
             # C. 持仓盯市与离场决策
             # ----------------------------------------------------------------
             if position.is_open:
-                position.holding_bars += 1
-                position.peak_price = max(position.peak_price, high_price)
-                position.trough_price = min(position.trough_price, low_price) if position.trough_price > 0 else low_price
+                position.update_market_price(high=high_price, low=low_price, close=close_price, current_time=date)
 
                 # 1. 盘中止损检查
                 should_exit_intraday, intraday_reason, intraday_fill = exit_sm.check_intraday_exit(
@@ -407,26 +503,27 @@ class KronosBacktesterPro:
                         position=position,
                         fill_price=intraday_fill,
                         reason=intraday_reason,
-                        holding_days=position.holding_bars,
+                        holding_days=position.holding_days,
+                        holding_bars=position.holding_bars,
                         stock_code_tag=code_tag,
+                        bar_volume=bar_vol,
+                        bar_high=high_price,
+                        bar_low=low_price,
                     )
                     consecutive_losses = consecutive_losses + 1 if trade_pnl <= 0 else 0
                     pending_close_reason = None
                     pending_close_price = None
-                    records.append({
-                        'date': date,
-                        'portfolio_value': broker.cash,
-                        'cash': broker.cash,
-                        'shares': 0,
-                        'close': close_price,
-                        'exec_signal': exec_signal,
-                    })
+                    pv_arr[idx] = broker.cash
+                    cash_arr[idx] = broker.cash
+                    shares_arr[idx] = 0
+                    close_arr[idx] = close_price
+                    signal_arr[idx] = exec_signal
                     continue
                 elif intraday_reason:
                     pending_close_reason = intraday_reason
                     pending_close_price = intraday_fill
 
-                # 2. 收盘 EOD 离场评估
+                # 2. 收盘/Bar 结束 EOD 离场评估
                 if not pending_close_reason:
                     pending_reason, pending_px = exit_sm.evaluate_eod_exit(
                         row=row,
@@ -434,49 +531,94 @@ class KronosBacktesterPro:
                         profile=profile,
                         idx=idx,
                         stock_code_tag=code_tag,
+                        is_last_bar_of_day=is_last_bar,
                     )
                     if pending_reason:
                         pending_close_reason = pending_reason
                         pending_close_price = pending_px
+
+                    # 若开启了日内不隔夜平仓模式且触发了尾盘离场，并且可以在当日平仓 (如满足T+N)
+                    current_time = date
+                    can_exit_today = position.can_exit(
+                        current_time=current_time,
+                        settlement_days=profile.settlement_days,
+                        current_idx=idx,
+                    )
+                    if intraday_exit_at_eod and is_last_bar and can_exit_today and pending_close_reason == "日内平仓模式(尾盘不隔夜)":
+                        cash, fee, trade_pnl, pnl_amount = broker.execute_sell(
+                            trade_date=date,
+                            symbol=self.current_stock_code or profile.market,
+                            position=position,
+                            fill_price=close_price,
+                            reason=pending_close_reason,
+                            holding_days=position.holding_days,
+                            holding_bars=position.holding_bars,
+                            stock_code_tag=code_tag,
+                            bar_volume=bar_vol,
+                            bar_high=high_price,
+                            bar_low=low_price,
+                        )
+                        consecutive_losses = consecutive_losses + 1 if trade_pnl <= 0 else 0
+                        pending_close_reason = None
+                        pending_close_price = None
+                        pv_arr[idx] = broker.cash
+                        cash_arr[idx] = broker.cash
+                        shares_arr[idx] = 0
+                        close_arr[idx] = close_price
+                        signal_arr[idx] = exec_signal
+                        continue
             else:
-                logger.debug(f"[{date.date()}] {code_tag}⚪ 空仓观望 (exec_signal={exec_signal}, "
-                             f"否决原因={getattr(row, 'veto_reason', '')})")
+                if self.enable_log and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"[{date.date() if hasattr(date, 'date') else date}] {code_tag}⚪ 空仓观望 (exec_signal={exec_signal}, "
+                                 f"否决原因={getattr(row, 'veto_reason', '')})")
 
             # ----------------------------------------------------------------
             # D. 每日盯市净值结算
             # ----------------------------------------------------------------
-            records.append({
-                'date': date,
-                'portfolio_value': broker.cash + position.shares * close_price,
-                'cash': broker.cash,
-                'shares': position.shares,
-                'close': close_price,
-                'exec_signal': exec_signal,
-            })
+            pv_arr[idx] = broker.cash + position.shares * close_price
+            cash_arr[idx] = broker.cash
+            shares_arr[idx] = position.shares
+            close_arr[idx] = close_price
+            signal_arr[idx] = exec_signal
 
         # 回测结束仍持仓则强制平仓
-        if position.is_open and records:
-            last_date = records[-1]['date']
-            last_close = records[-1]['close']
+        if position.is_open and n_rows > 0:
+            last_date = rows[-1].Index
+            last_close = close_arr[-1]
             cash, fee, trade_pnl, pnl_amount = broker.execute_sell(
                 trade_date=last_date,
                 symbol=self.current_stock_code or profile.market,
                 position=position,
                 fill_price=last_close,
                 reason='回测结束强平',
-                holding_days=position.holding_bars,
+                holding_days=position.holding_days,
+                holding_bars=position.holding_bars,
                 stock_code_tag=code_tag,
+                bar_volume=getattr(rows[-1], 'volume', None),
+                bar_high=getattr(rows[-1], 'high', last_close),
+                bar_low=getattr(rows[-1], 'low', last_close),
             )
-            records[-1]['portfolio_value'] = broker.cash
-            records[-1]['shares'] = 0
+            pv_arr[-1] = broker.cash
+            shares_arr[-1] = 0
 
         trades = broker.trades
-        logger.info(
-            f"{code_tag}[状态机结算] 回测完成: 总交易笔数 {len([t for t in trades if t['action']=='SELL'])} 笔 | "
-            f"期末总净值: {records[-1]['portfolio_value']:,.2f}"
-        )
+        if self.enable_log:
+            logger.info(
+                f"{code_tag}[状态机结算] 回测完成: 总交易笔数 {len([t for t in trades if t['action']=='SELL'])} 笔 | "
+                f"期末总净值: {pv_arr[-1]:,.2f}"
+            )
 
-        backtest_df = pd.DataFrame(records).set_index('date')
+        backtest_df = pd.DataFrame(
+            {
+                'portfolio_value': pv_arr,
+                'cash': cash_arr,
+                'shares': shares_arr,
+                'close': close_arr,
+                'exec_signal': signal_arr,
+            },
+            index=df.index,
+        )
+        backtest_df.index.name = 'date'
         backtest_df['returns'] = backtest_df['portfolio_value'].pct_change().fillna(0.0)
         backtest_df['position_market_value'] = (backtest_df['shares'] * backtest_df['close']).round(2)
         backtest_df['position_pct'] = (backtest_df['position_market_value'] / backtest_df['portfolio_value']).round(4)
@@ -497,16 +639,19 @@ class KronosBacktesterPro:
         self,
         stock_code: str,
         output_dir: str,
-        z_score_threshold: float = 1.2,
+        timeframe: Optional[Union[str, TimeFrame]] = None,
+        higher_hist_df: Optional[pd.DataFrame] = None,
+        use_mtf_trend_filter: Optional[bool] = None,
+        z_score_threshold: Optional[float] = None,
         volatility_window: int = 14,
-        hard_stop_loss: float = 0.04,
-        trailing_stop: float = 0.025,
-        max_holding_days: int = 5,
+        hard_stop_loss: Optional[float] = None,
+        trailing_stop: Optional[float] = None,
+        max_holding_days: Optional[int] = None,
         show_plot: bool = False,
-        entry_percentile: float = 0.80,
-        calib_window: int = 60,
+        entry_percentile: Optional[float] = None,
+        calib_window: Optional[int] = None,
         dynamic_calib: bool = True,
-        calib_window_min: int = 20,
+        calib_window_min: Optional[int] = None,
         vol_high_thresh: float = 0.40,
         vol_low_thresh: float = 0.20,
         risk_per_trade: float = 0.01,
@@ -521,12 +666,17 @@ class KronosBacktesterPro:
         pf_confidence_threshold: float = 0.35,
         reversal_aware_debias: bool = True,
         reversal_debias_weight: float = 0.0,
+        volume_participation_cap: Optional[float] = None,
+        slippage_model: Optional[str] = None,
+        intraday_exit_at_eod: Optional[bool] = None,
+        overnight_gap_protection: Optional[bool] = None,
         enable_log: bool = True,
         clear_log: bool = False,
+        auto_adapt_params: bool = True,
         **kwargs,
     ) -> tuple:
         """
-        一键完整回测管线：市场规则 → 加载 → 技能体检 → 对齐/信号 → 撮合 → 指标 → 绘图
+        一键完整回测管线：市场规则 → 加载 → 自适应参数 → 技能体检 → 对齐/信号 → 撮合 → 指标 → 绘图
 
         require_skill=True 时，预测技能体检未通过将直接中止回测，
         避免在没有预测能力的标的上继续调参。
@@ -547,13 +697,69 @@ class KronosBacktesterPro:
             clean_code = getattr(self, 'current_stock_code', stock_code)
             print(f"   市场规则: {self.profile.describe()}")
 
+            hist_df, pred_df = self.load_data(stock_code, particle_filter=particle_filter, timeframe=timeframe)
+
+            eff_tf = timeframe or detect_timeframe(hist_df)
+            if auto_adapt_params:
+                adaptive_cfg = resolve_timeframe_params(
+                    timeframe=eff_tf,
+                    market=self.profile.market,
+                    overrides={
+                        'hard_stop': hard_stop_loss,
+                        'trail_stop': trailing_stop,
+                        'max_hold': max_holding_days,
+                        'z_threshold': z_score_threshold,
+                        'entry_percentile': entry_percentile,
+                        'calib_window': calib_window,
+                        'calib_window_min': calib_window_min,
+                        'volume_participation_cap': volume_participation_cap,
+                        'slippage_model': slippage_model,
+                        'intraday_exit_at_eod': intraday_exit_at_eod,
+                        'overnight_gap_protection': overnight_gap_protection,
+                        'use_mtf_trend_filter': use_mtf_trend_filter,
+                    },
+                    auto_adapt=True,
+                )
+                hard_stop_loss = adaptive_cfg['hard_stop']
+                trailing_stop = adaptive_cfg['trail_stop']
+                max_holding_days = adaptive_cfg['max_hold']
+                z_score_threshold = adaptive_cfg['z_threshold']
+                entry_percentile = adaptive_cfg['entry_percentile']
+                calib_window = adaptive_cfg['calib_window']
+                calib_window_min = adaptive_cfg['calib_window_min']
+                volume_participation_cap = adaptive_cfg['volume_participation_cap']
+                slippage_model = adaptive_cfg['slippage_model']
+                intraday_exit_at_eod = adaptive_cfg['intraday_exit_at_eod']
+                overnight_gap_protection = adaptive_cfg['overnight_gap_protection']
+                use_mtf_trend_filter = adaptive_cfg['use_mtf_trend_filter']
+
+                tf_obj = TimeFrame.from_str(eff_tf)
+                print(f"   [自适应配置] 周期: {tf_obj.label} ({tf_obj.value}) | 止损: {hard_stop_loss:.2%} | 止盈: {trailing_stop:.2%} | 持仓: {max_holding_days}Bar | 信噪比: {z_score_threshold} | 滑点: {slippage_model} | MTF共振: {use_mtf_trend_filter}")
+            else:
+                hard_stop_loss = 0.04 if hard_stop_loss is None else hard_stop_loss
+                trailing_stop = 0.025 if trailing_stop is None else trailing_stop
+                max_holding_days = 15 if max_holding_days is None else max_holding_days
+                z_score_threshold = 0.55 if z_score_threshold is None else z_score_threshold
+                entry_percentile = 0.80 if entry_percentile is None else entry_percentile
+                calib_window = 60 if calib_window is None else calib_window
+                calib_window_min = 20 if calib_window_min is None else calib_window_min
+                slippage_model = 'fixed' if slippage_model is None else slippage_model
+                intraday_exit_at_eod = False if intraday_exit_at_eod is None else intraday_exit_at_eod
+                overnight_gap_protection = True if overnight_gap_protection is None else overnight_gap_protection
+                use_mtf_trend_filter = True if use_mtf_trend_filter is None else use_mtf_trend_filter
+
             logger.info(f"[{clean_code}] ==================== KRONOS QUANT BACKTEST START ====================")
             logger.info(f"[{clean_code}] 标的代码: {stock_code} | 市场规则: {self.profile.describe()} | 初始资金: {self.profile.currency_symbol}{self.initial_capital:,.2f}")
-            logger.info(f"[{clean_code}] 策略配置: 止损={hard_stop_loss:.2%}, 移动止盈={trailing_stop:.2%}, 最大持仓={max_holding_days}天, 动态校准={'开启' if dynamic_calib else '关闭'}, 风险预算={risk_per_trade:.2%}")
-
-            hist_df, pred_df = self.load_data(stock_code, particle_filter=particle_filter)
+            logger.info(f"[{clean_code}] 策略配置: 止损={hard_stop_loss:.2%}, 移动止盈={trailing_stop:.2%}, 最大持仓={max_holding_days}Bar, 动态校准={'开启' if dynamic_calib else '关闭'}, 风险预算={risk_per_trade:.2%}")
 
             print("\n[Step 2] 时序对齐 & 信号生成")
+            strat_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in (
+                    'volume_participation_cap', 'slippage_model', 'intraday_exit_at_eod',
+                    'overnight_gap_protection', 'slippage_impact_coef', 'max_slippage'
+                )
+            }
             signal_df = self.align_and_generate_signals(
                 hist_df, pred_df,
                 z_score_threshold=z_score_threshold,
@@ -571,6 +777,9 @@ class KronosBacktesterPro:
                 pf_confidence_threshold=pf_confidence_threshold,
                 reversal_aware_debias=reversal_aware_debias,
                 reversal_debias_weight=reversal_debias_weight,
+                higher_hist_df=higher_hist_df,
+                use_mtf_trend_filter=use_mtf_trend_filter,
+                **strat_kwargs,
             )
 
             print("\n[Step 2b] 预测技能体检")
@@ -595,6 +804,11 @@ class KronosBacktesterPro:
                 risk_per_trade=risk_per_trade,
                 max_position_pct=max_position_pct,
                 intraday_stop=intraday_stop,
+                volume_participation_cap=volume_participation_cap,
+                slippage_model=slippage_model,
+                intraday_exit_at_eod=intraday_exit_at_eod,
+                overnight_gap_protection=overnight_gap_protection,
+                **{k: v for k, v in kwargs.items() if k in ('slippage_impact_coef', 'max_slippage')},
             )
 
             print("\n[Step 4] 绩效指标计算")
@@ -609,6 +823,7 @@ class KronosBacktesterPro:
 
             print("\n[Step 6] 导出量化分析数据集")
             params = {
+                'timeframe': TimeFrame.from_str(eff_tf).value,
                 'z_score_threshold': z_score_threshold,
                 'volatility_window': volatility_window,
                 'hard_stop_loss': hard_stop_loss,
@@ -628,6 +843,11 @@ class KronosBacktesterPro:
                 'forecast_horizon': forecast_horizon,
                 'particle_filter': particle_filter,
                 'pf_confidence_threshold': pf_confidence_threshold,
+                'volume_participation_cap': volume_participation_cap,
+                'slippage_model': slippage_model,
+                'intraday_exit_at_eod': intraday_exit_at_eod,
+                'overnight_gap_protection': overnight_gap_protection,
+                'use_mtf_trend_filter': use_mtf_trend_filter,
             }
             self.export_backtest_artifacts(
                 stock_code=stock_code,
@@ -784,10 +1004,12 @@ class KronosBacktesterPro:
                 print(f"  {k:<12}: {int(v)}")
             elif k in ('期末总资产', '总手续费', '总盈亏金额'):
                 print(f"  {k:<12}: {cur} {v:>,.2f}")
-            elif k == '平均持仓天数':
-                print(f"  {k:<12}: {v:.1f} 天")
-            else:
+            elif isinstance(v, (int, np.integer)):
+                print(f"  {k:<12}: {int(v)}")
+            elif isinstance(v, (float, np.floating)):
                 print(f"  {k:<12}: {v:.4f}")
+            else:
+                print(f"  {k:<12}: {v}")
 
         if not metrics.get('统计可靠', True):
             print(f"\n  ⚠️ 交易样本仅 {metrics.get('总交易笔数', 0)} 笔（<20），"

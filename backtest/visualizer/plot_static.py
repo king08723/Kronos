@@ -145,18 +145,22 @@ class StaticVisualizer:
         ax3.grid(True, alpha=0.25)
         ax3.tick_params(axis='x', labelbottom=False)
 
+        from ..core.timeframes import detect_timeframe
+        tf = detect_timeframe(backtest_df)
+        bar_width = (tf.minutes / 1440.0) * 0.8 if tf.is_intraday else 0.8
+
         # ---- 子图4：Z-Score 信号强度 ----
         if 'signal_score' in signal_df.columns:
             z_scores = signal_df['signal_score'].reindex(dates)
             ax4.bar(dates, z_scores.clip(-4, 4), color=np.where(z_scores > 0, '#2ECC71', '#E74C3C'),
-                    alpha=0.7, width=0.8, label='Z-Score')
+                    alpha=0.7, width=bar_width, label='Z-Score')
             ax4.axhline(0, color='gray', linewidth=0.8)
             # 默认阈值线（标注）
             ax4.axhline(1.2, color='orange', linewidth=1, linestyle='--', alpha=0.7, label='入场阈值(1.2σ)')
             ax4.set_ylabel('Z-Score', fontsize=10)
             ax4.legend(fontsize=8, loc='upper right')
             ax4.grid(True, alpha=0.2)
-            ax4.set_xlabel('日期', fontsize=10)
+            ax4.set_xlabel('时间' if tf.is_intraday else '日期', fontsize=10)
 
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)

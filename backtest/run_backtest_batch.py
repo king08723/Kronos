@@ -31,6 +31,7 @@ import json
 import socket
 import argparse
 import warnings
+from typing import Optional, List, Dict, Any, Union, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -69,6 +70,7 @@ from run_backtest_kronos_pro import (
     clear_logs,
     set_logging_state,
 )
+from backtest.core import resolve_timeframe_params, get_timeframe_defaults, TimeFrame
 
 try:
     from prediction_akshare_2024_2025_copy import (
@@ -161,14 +163,18 @@ class BatchBacktester:
     # ---- 步骤 1: 并发数据准备 ----
 
     def prepare_data_pool(self, stock_list, data_dir, history_days=700,
-                          lookback=120, test_days=120, force_refresh=False,
-                          max_workers=6, progress_callback=None):
+                          lookback=90, test_days=120, force_refresh=False,
+                          max_workers=6, progress_callback=None, timeframe="1d",
+                          lookback_bars=None, test_bars=None):
+        tf_obj = TimeFrame.from_str(timeframe)
+        eff_lookback = lookback_bars if lookback_bars is not None else lookback
+        eff_test = test_bars if test_bars is not None else test_days
         print("\n" + "=" * 75)
-        print(f"📡 [1/4] 并发准备历史行情 (目标: {len(stock_list)} 只, 线程: {max_workers})")
+        print(f"📡 [1/4] 并发准备历史行情 ({tf_obj.label} · 目标: {len(stock_list)} 只, 线程: {max_workers})")
         print("=" * 75)
         ensure_output_directory(data_dir)
         fetcher = self._get_fetcher()
-        min_days = lookback + test_days
+        min_bars = eff_lookback + eff_test
 
         def _fetch(item):
             item = parse_stock_item(item)
@@ -182,12 +188,14 @@ class BatchBacktester:
                     stock_code=norm_code, data_dir=data_dir,
                     history_days=history_days, market=det_mkt,
                     force_refresh=force_refresh,
+                    timeframe=timeframe,
                 )
                 if hist_df is None or len(hist_df) == 0:
                     return norm_code, name, None, det_mkt, "行情为空"
-                if len(hist_df) < min_days:
+                if len(hist_df) < min_bars:
+                    bar_unit = "条" if tf_obj.is_intraday else "日"
                     return norm_code, name, None, det_mkt, \
-                        f"日K线({len(hist_df)}日)不足{min_days}日"
+                        f"{tf_obj.label}K线({len(hist_df)}{bar_unit})不足{min_bars}{bar_unit}"
                 return norm_code, name, hist_df, det_mkt, "OK"
             except Exception as e:
                 return norm_code, name, None, det_mkt, str(e)
@@ -223,23 +231,43 @@ class BatchBacktester:
 
     def run_single_stock(self, stock_info, data_dir, pred_dir,
                          backtest_batch_dir, auto_predict=True,
-                         test_days=120, lookback=120, step_size=1,
-                         sample_count=20, forecast_horizon="auto",
+                         test_days=120, lookback=90, step_size=1,
+                         sample_count=35, forecast_horizon="auto",
                          max_auto_horizon=10, force_refresh=False,
                          min_down_quantile=0.10,
-                         initial_capital=None, z_threshold=0.70,
-                         hard_stop=0.04, trail_stop=0.025, max_hold=15,
-                         min_lot_guarantee=True, entry_percentile=0.80,
-                         calib_window=60, dynamic_calib=True,
-                         calib_window_min=20, vol_high_thresh=0.40,
+                         initial_capital=None, z_threshold: Optional[float] = None,
+                         hard_stop: Optional[float] = None, trail_stop: Optional[float] = None,
+                         max_hold: Optional[int] = None,
+                         min_lot_guarantee=True, entry_percentile: Optional[float] = None,
+                         calib_window: Optional[int] = None, dynamic_calib=True,
+                         calib_window_min: Optional[int] = None, vol_high_thresh=0.40,
                          vol_low_thresh=0.20, risk_per_trade=0.01,
                          max_position=0.80, intraday_stop=True,
                          require_skill=False, generate_plots=True,
-                         enable_log: bool = True, **kwargs):
+                         enable_log: bool = True,
+                         timeframe: str = "1d",
+                         volume_participation_cap: Optional[float] = None,
+                         slippage_model: Optional[str] = None,
+                         slippage_impact_coef: float = 0.1,
+                         max_slippage: float = 0.02,
+                         intraday_exit_at_eod: Optional[bool] = None,
+                         overnight_gap_protection: Optional[bool] = None,
+                         use_mtf_trend_filter: Optional[bool] = None,
+                         commission_bps: Optional[float] = None,
+                         slippage_bps: Optional[float] = None,
+                         auto_adapt_params: bool = True,
+                         test_bars: Optional[int] = None,
+                         lookback_bars: Optional[int] = None,
+                         **kwargs):
         code = stock_info['stock_code']
         name = stock_info['stock_name']
         market = stock_info.get('market')
         hist_df = stock_info.get('hist_df')
+
+        eff_test_bars = test_bars if test_bars is not None else test_days
+        eff_lookback_bars = lookback_bars if lookback_bars is not None else lookback
+        test_days = eff_test_bars
+        lookback = eff_lookback_bars
 
         stock_out = os.path.join(backtest_batch_dir, code)
         ensure_output_directory(stock_out)
@@ -247,16 +275,63 @@ class BatchBacktester:
         prof = MarketProfile.for_stock(code, market=market, stock_name=name)
         cap = initial_capital if initial_capital is not None else prof.default_capital
 
+        if auto_adapt_params:
+            adaptive_cfg = resolve_timeframe_params(
+                timeframe=timeframe,
+                market=prof.market,
+                overrides={
+                    'z_threshold': z_threshold,
+                    'hard_stop': hard_stop,
+                    'trail_stop': trail_stop,
+                    'max_hold': max_hold,
+                    'entry_percentile': entry_percentile,
+                    'calib_window': calib_window,
+                    'calib_window_min': calib_window_min,
+                    'volume_participation_cap': volume_participation_cap,
+                    'slippage_model': slippage_model,
+                    'intraday_exit_at_eod': intraday_exit_at_eod,
+                    'overnight_gap_protection': overnight_gap_protection,
+                    'use_mtf_trend_filter': use_mtf_trend_filter,
+                },
+                auto_adapt=True,
+            )
+            z_threshold = adaptive_cfg['z_threshold']
+            hard_stop = adaptive_cfg['hard_stop']
+            trail_stop = adaptive_cfg['trail_stop']
+            max_hold = adaptive_cfg['max_hold']
+            entry_percentile = adaptive_cfg['entry_percentile']
+            calib_window = adaptive_cfg['calib_window']
+            calib_window_min = adaptive_cfg['calib_window_min']
+            volume_participation_cap = adaptive_cfg['volume_participation_cap']
+            slippage_model = adaptive_cfg['slippage_model']
+            intraday_exit_at_eod = adaptive_cfg['intraday_exit_at_eod']
+            overnight_gap_protection = adaptive_cfg['overnight_gap_protection']
+            use_mtf_trend_filter = adaptive_cfg['use_mtf_trend_filter']
+        else:
+            z_threshold = 0.55 if z_threshold is None else z_threshold
+            hard_stop = 0.04 if hard_stop is None else hard_stop
+            trail_stop = 0.025 if trail_stop is None else trail_stop
+            max_hold = 15 if max_hold is None else max_hold
+            entry_percentile = 0.80 if entry_percentile is None else entry_percentile
+            calib_window = 60 if calib_window is None else calib_window
+            calib_window_min = 20 if calib_window_min is None else calib_window_min
+            slippage_model = "fixed" if slippage_model is None else slippage_model
+            intraday_exit_at_eod = False if intraday_exit_at_eod is None else intraday_exit_at_eod
+            overnight_gap_protection = True if overnight_gap_protection is None else overnight_gap_protection
+            use_mtf_trend_filter = True if use_mtf_trend_filter is None else use_mtf_trend_filter
+
         print(f"\n{'='*70}")
-        print(f"🚀 回测: [{prof.market}] {name} ({code}) | 本金: {prof.currency_symbol}{cap:,.2f} ({prof.currency})")
+        print(f"🚀 回测: [{prof.market}] {name} ({code}) | 周期: {timeframe} | 本金: {prof.currency_symbol}{cap:,.2f} ({prof.currency})")
         print(f"   规则: {prof.describe()}")
+        print(f"   滑点: {slippage_model} | 流动性截断: {volume_participation_cap or '无限制'} | 日内强平: {intraday_exit_at_eod} | MTF共振: {use_mtf_trend_filter}")
+        print(f"   防守: 硬止损 {hard_stop:.2%} | 移动止盈 {trail_stop:.2%} | 最多持有 {max_hold} Bar | 信噪比门槛 {z_threshold}")
         print(f"   输出: {stock_out}")
         print(f"{'='*70}")
 
         fetcher = self._get_fetcher()
         pred_df = None
 
-        # 预测阶段
+        # 预测阶段 (若需要自动滚动预测)
         if auto_predict:
             if hist_df is None:
                 hist_df = fetcher.fetch_history(
@@ -274,6 +349,9 @@ class BatchBacktester:
                 force_refresh=force_refresh,
                 min_down_quantile=min_down_quantile,
                 market=market,
+                test_bars=eff_test_bars,
+                lookback_bars=eff_lookback_bars,
+                timeframe=timeframe,
             )
 
         enable_log = kwargs.get('enable_log', enable_log)
@@ -286,9 +364,17 @@ class BatchBacktester:
         )
         try:
             bt.set_market(code, market=market, stock_name=name, log_dir=stock_out, enable_log=enable_log)
+            if commission_bps is not None:
+                bt.profile.commission_rate = float(commission_bps) / 10000.0
+            if slippage_bps is not None:
+                bt.slippage_rate = float(slippage_bps) / 10000.0
 
             if hist_df is None or pred_df is None:
-                hist_df, pred_df = bt.load_data(code)
+                h_df, p_df = bt.load_data(code, timeframe=timeframe)
+                if hist_df is None:
+                    hist_df = h_df
+                if pred_df is None:
+                    pred_df = p_df
 
             signal_df = bt.align_and_generate_signals(
                 hist_df, pred_df, z_score_threshold=z_threshold,
@@ -301,6 +387,8 @@ class BatchBacktester:
                 calib_window_min=calib_window_min,
                 vol_high_thresh=vol_high_thresh,
                 vol_low_thresh=vol_low_thresh,
+                timeframe=timeframe,
+                use_mtf_trend_filter=use_mtf_trend_filter,
             )
 
             skill = bt.evaluate_prediction_skill(signal_df, hard_stop_loss=hard_stop)
@@ -315,10 +403,18 @@ class BatchBacktester:
                 min_lot_guarantee=min_lot_guarantee,
                 risk_per_trade=risk_per_trade,
                 max_position_pct=max_position, intraday_stop=intraday_stop,
+                volume_participation_cap=volume_participation_cap,
+                slippage_model=slippage_model,
+                slippage_impact_coef=slippage_impact_coef,
+                max_slippage=max_slippage,
+                intraday_exit_at_eod=intraday_exit_at_eod,
+                overnight_gap_protection=overnight_gap_protection,
             )
 
             metrics = bt.evaluate_metrics(backtest_df, trades)
             metrics['_skill'] = skill
+            metrics['timeframe'] = timeframe
+            metrics['slippage_model'] = slippage_model
 
             # 隔离落盘全套量化分析数据集 (trades, daily_equity, daily_backtest, signals, metrics)
             bt.export_backtest_artifacts(
@@ -336,6 +432,12 @@ class BatchBacktester:
                     'risk_per_trade': risk_per_trade,
                     'max_position': max_position,
                     'intraday_stop': intraday_stop,
+                    'timeframe': timeframe,
+                    'volume_participation_cap': volume_participation_cap,
+                    'slippage_model': slippage_model,
+                    'intraday_exit_at_eod': intraday_exit_at_eod,
+                    'overnight_gap_protection': overnight_gap_protection,
+                    'use_mtf_trend_filter': use_mtf_trend_filter,
                 }
             )
 
@@ -495,8 +597,10 @@ class BatchBacktester:
 
             tradable = sk.get('tradable', False)
             final_cap = m.get('期末总资产', 0.0)
+            tf_val = m.get('timeframe', '1d')
             rows.append({
                 '股票代码': code, '股票名称': name, '市场': market,
+                '周期': tf_val,
                 '结算币种': currency,
                 '期末资产': f"{cs}{final_cap:,.2f}",
                 '回测状态': '成功',
@@ -573,14 +677,16 @@ DEFAULT_BATCH_CONFIG = {
         {"stock_code": "AAPL",   "stock_name": "苹果公司", "market": "US"},
         {"stock_code": "TSLA",   "stock_name": "特斯拉",   "market": "US"},
     ],
-    "lookback": 120, "test_days": 120, "step_size": 1,
-    "samples": 20, "history_days": 700, "horizon": "auto",
+    "lookback_bars": 90, "test_bars": 120,
+    "lookback": 90, "test_days": 120, "step_size": 1,
+    "samples": 35, "history_days": 700, "horizon": "auto",
     "max_auto_horizon": 10, "force_refresh": False,
-    "capital": None, "z_threshold": 0.70,
+    "capital": None, "z_threshold": 0.55,
     "hard_stop": 0.04, "trail_stop": 0.025, "max_hold": 15,
     "min_lot_guarantee": True, "entry_percentile": 0.80, "calib_window": 60,
     "dynamic_calib": True, "calib_window_min": 20,
     "risk_per_trade": 0.01, "max_position": 0.80,
+    "require_skill": False,
     "max_workers": 6, "parallel_stocks": 1,
 }
 
@@ -607,29 +713,36 @@ def cli_main():
     parser.add_argument("--no-auto", action="store_false", dest="auto")
     parser.add_argument("--dry-run", action="store_true",
                         help="仅预检行情数据，不加载模型")
-    # 预测参数
-    parser.add_argument("--test-days", type=int, default=120)
-    parser.add_argument("--lookback", type=int, default=120)
-    parser.add_argument("--step-size", type=int, default=1)
-    parser.add_argument("--samples", type=int, default=20)
-    parser.add_argument("--history-days", type=int, default=700)
+    # 预测参数 (以 K 线根数 Bar 数量为绝对核心标准)
+    parser.add_argument("--test-bars", "--test-days", dest="test_bars", type=int, default=None,
+                        help="回测验证窗口 K线根数 (默认日线120，30m自适应200Bar)")
+    parser.add_argument("--lookback-bars", "--lookback", dest="lookback_bars", type=int, default=None,
+                        help="预测输入历史窗口 K线根数 (默认日线90，30m自适应160Bar)")
+    parser.add_argument("--step-size", type=int, default=None)
+    parser.add_argument("--samples", type=int, default=35)
+    parser.add_argument("--history-days", type=int, default=None)
     parser.add_argument("--horizon", type=str, default="auto")
-    parser.add_argument("--max-auto-horizon", type=int, default=10)
+    parser.add_argument("--max-auto-horizon", type=int, default=None)
     parser.add_argument("--force-refresh", action="store_true")
     # 策略参数
     parser.add_argument("--capital", type=float, default=None,
                         help="初始资金（缺省根据股票所在市场自动匹配：CN=10万, HK=30万, US=5万）")
-    parser.add_argument("--z-threshold", type=float, default=0.70)
-    parser.add_argument("--hard-stop", type=float, default=0.04)
-    parser.add_argument("--trail-stop", type=float, default=0.025)
-    parser.add_argument("--max-hold", type=int, default=15)
-    parser.add_argument("--entry-percentile", type=float, default=0.80)
-    parser.add_argument("--calib-window", type=int, default=60,
-                        help="基准滚动校准窗口，默认 60 交易日")
+    parser.add_argument("--z-threshold", type=float, default=None,
+                        help="入场信噪比门槛（默认按周期自适应：1d=0.55, 30m=0.75, 1m=1.05）")
+    parser.add_argument("--hard-stop", type=float, default=None,
+                        help="基准硬止损线（默认按周期自适应：1d=4.0%, 30m=2.2%, 1m=0.8%）")
+    parser.add_argument("--trail-stop", type=float, default=None,
+                        help="移动止盈回撤（默认按周期自适应：1d=2.5%, 30m=1.6%, 1m=0.5%）")
+    parser.add_argument("--max-hold", type=int, default=None,
+                        help="最大持仓Bar数（默认按周期自适应：1d=15天, 30m=24Bar, 1m=45Bar）")
+    parser.add_argument("--entry-percentile", type=float, default=None,
+                        help="入场自身分位阈值（默认按周期自适应：1d=0.80, 30m=0.82, 1m=0.90）")
+    parser.add_argument("--calib-window", type=int, default=None,
+                        help="基准滚动校准窗口（默认按周期自适应：1d=60, 30m=20, 1m=5）")
     parser.add_argument("--no-dynamic-calib", action="store_true",
                         help="关闭波动率自适应校准窗口（默认开启）")
-    parser.add_argument("--calib-window-min", type=int, default=20,
-                        help="极端高波动率下校准窗口收缩下限，默认 20 交易日")
+    parser.add_argument("--calib-window-min", type=int, default=None,
+                        help="极端高波动率下校准窗口收缩下限（默认按周期自适应）")
     parser.add_argument("--risk-per-trade", type=float, default=0.01)
     parser.add_argument("--max-position", type=float, default=0.80)
     parser.add_argument("--no-min-lot-guarantee", action="store_true",
@@ -637,6 +750,21 @@ def cli_main():
     parser.add_argument("--no-intraday-stop", action="store_true",
                         help="关闭盘中止损（默认开启，遵守市场 T+N 合规）")
     parser.add_argument("--require-skill", action="store_true")
+    # 高频与微观结构
+    parser.add_argument("--timeframe", type=str, default="1d",
+                        choices=["1d", "60m", "30m", "15m", "5m", "1m"],
+                        help="回测K线颗粒度 (1d/60m/30m/15m/5m/1m，默认1d)")
+    parser.add_argument("--volume-cap", type=float, default=None,
+                        help="单 Bar 最大成交量占比上限 (如 0.10 表示 10%%)")
+    parser.add_argument("--slippage-model", type=str, default=None,
+                        choices=["fixed", "dynamic"],
+                        help="滑点模型 (默认按周期自适应: 1d/60m=fixed, 30m/1m=dynamic)")
+    parser.add_argument("--intraday-exit-eod", action="store_true", default=None,
+                        help="日内收盘强平 (不留隔夜仓，T+0市场小周期默认自适应启用)")
+    parser.add_argument("--no-mtf-filter", action="store_true",
+                        help="关闭跨周期日线宏观趋势滤网 (默认开启)")
+    parser.add_argument("--no-auto-adapt", action="store_true", default=False,
+                        help="关闭周期最佳参数自适应 (强制使用日线固定参数)")
     # 并发与目录
     parser.add_argument("--max-workers", type=int, default=6)
     parser.add_argument("--parallel-stocks", type=int, default=1,
@@ -700,17 +828,63 @@ def cli_main():
     print(f"  标的数  : {len(pool)} 只")
     print(f"  模式    : {'DRY RUN 预检' if args.dry_run else ('AUTO 预测+回测' if args.auto else 'MANUAL 现有文件回测')}")
     print(f"  时界    : {horizon}")
-    print(f"  回测    : {args.test_days} 交易日 | 回看: {args.lookback} 交易日")
+    # 周期参数自适应解析
+    tf_resolved = resolve_timeframe_params(
+        timeframe=args.timeframe,
+        market='CN',
+        overrides={
+            'test_bars': args.test_bars,
+            'lookback_bars': args.lookback_bars,
+            'history_days': args.history_days,
+            'step_size': args.step_size,
+            'max_auto_horizon': args.max_auto_horizon,
+            'z_threshold': args.z_threshold,
+            'hard_stop': args.hard_stop,
+            'trail_stop': args.trail_stop,
+            'max_hold': args.max_hold,
+            'entry_percentile': args.entry_percentile,
+            'calib_window': args.calib_window,
+            'calib_window_min': args.calib_window_min,
+            'volume_cap': args.volume_cap,
+            'slippage_model': args.slippage_model,
+            'intraday_exit_eod': True if args.intraday_exit_eod else None,
+            'no_mtf_filter': args.no_mtf_filter,
+        },
+        auto_adapt=not args.no_auto_adapt,
+    )
+    tf_obj = TimeFrame.from_str(args.timeframe)
+    test_bars = tf_resolved['test_bars']
+    lookback_bars = tf_resolved['lookback_bars']
+    history_days = tf_resolved['history_days']
+    max_auto_horizon = tf_resolved['max_auto_horizon']
+    step_size = tf_resolved.get('step_size', 1)
+
+    print("=" * 75)
+    print("  Kronos 批量量化回测系统 (Batch Engine)")
+    print("=" * 75)
+    print(f"  标的数  : {len(pool)} 只")
+    print(f"  周期    : {tf_obj.label} ({args.timeframe})")
+    print(f"  模式    : {'DRY RUN 预检' if args.dry_run else ('AUTO 预测+回测' if args.auto else 'MANUAL 现有文件回测')}")
+    print(f"  时界    : {horizon} (最大搜索: {max_auto_horizon} 根 Bar)")
+    print(f"  回测窗口: {test_bars} 根 Bar | 预测输入: {lookback_bars} 根 Bar | 历史拉取: {history_days} 天")
     print(f"  输出    : {args.output_dir}")
     print("=" * 75)
+
+    if not args.no_auto_adapt and args.timeframe != "1d":
+        print(f"🤖 [周期自适应] 已为 {tf_obj.label} ({args.timeframe}) 自动配置量化最佳实践参数:")
+        print(f"   止损: {tf_resolved['hard_stop']:.2%} | 移动止盈: {tf_resolved['trail_stop']:.2%} | 持仓: {tf_resolved['max_hold']} Bar")
+        print(f"   信噪比: {tf_resolved['z_threshold']} | 分位: {tf_resolved['entry_percentile']:.2f} | 滑点模型: {tf_resolved['slippage_model']} | MTF共振: {tf_resolved['use_mtf_trend_filter']}")
+        print(f"   K线窗口: 回测={test_bars} 根 Bar | 预测输入={lookback_bars} 根 Bar | 历史获取={history_days} 天 | 推演={max_auto_horizon} Bar")
 
     engine = BatchBacktester(log_dir=args.output_dir, device=args.device)
 
     valid = engine.prepare_data_pool(
         stock_list=pool, data_dir=args.data_dir,
-        history_days=args.history_days, lookback=args.lookback,
-        test_days=args.test_days, force_refresh=args.force_refresh,
+        history_days=history_days, lookback=lookback_bars,
+        test_days=test_bars, force_refresh=args.force_refresh,
         max_workers=args.max_workers,
+        timeframe=args.timeframe,
+        lookback_bars=lookback_bars, test_bars=test_bars,
     )
     if not valid:
         print("❌ 无标的通过预检"); sys.exit(1)
@@ -721,11 +895,12 @@ def cli_main():
         valid_data_pool=valid, data_dir=args.data_dir,
         pred_dir=args.pred_dir, backtest_batch_dir=args.output_dir,
         parallel_stocks=args.parallel_stocks,
-        auto_predict=args.auto, test_days=args.test_days,
-        lookback=args.lookback, step_size=args.step_size,
+        auto_predict=args.auto, test_days=test_bars,
+        lookback=lookback_bars, step_size=step_size,
         sample_count=args.samples, forecast_horizon=horizon,
-        max_auto_horizon=args.max_auto_horizon,
+        max_auto_horizon=max_auto_horizon,
         force_refresh=args.force_refresh,
+        test_bars=test_bars, lookback_bars=lookback_bars,
         initial_capital=args.capital, z_threshold=args.z_threshold,
         hard_stop=args.hard_stop, trail_stop=args.trail_stop,
         max_hold=args.max_hold,
@@ -740,6 +915,12 @@ def cli_main():
         require_skill=args.require_skill,
         generate_plots=not args.no_plots,
         enable_log=not args.no_log,
+        timeframe=args.timeframe,
+        volume_participation_cap=args.volume_cap,
+        slippage_model=args.slippage_model,
+        intraday_exit_at_eod=args.intraday_exit_eod,
+        use_mtf_trend_filter=not args.no_mtf_filter,
+        auto_adapt_params=not args.no_auto_adapt,
     )
 
     engine.generate_ranking_summary(results, args.output_dir)

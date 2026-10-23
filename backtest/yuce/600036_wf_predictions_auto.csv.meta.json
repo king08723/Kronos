@@ -1,7 +1,7 @@
 {
   "stock_code": "600036",
   "test_days": 120,
-  "lookback": 120,
+  "lookback": 90,
   "step_size": 1,
   "sample_count": 20,
   "forecast_horizon": "auto",
@@ -11,7 +11,7 @@
   "min_down_quantile": 0.1,
   "particle_filter": false,
   "pf_val_window": 3,
-  "hist_last_date": "2026-10-09",
-  "n_hist": 463,
+  "hist_last_date": "2026-10-21",
+  "n_hist": 464,
   "schema_version": 2
 }

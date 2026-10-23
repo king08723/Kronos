@@ -12,6 +12,10 @@
 
   <style>
 
+
+
+
+
     /* CSS Variables Design System */
     :root {
       --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans", sans-serif;
@@ -1650,6 +1654,10 @@
       opacity: 1;
     }
   
+  
+  
+  
+  
   </style>
 </head>
 <body>
@@ -1976,7 +1984,7 @@
     <div class="nav-sub-list">
       <a href="#section-11-1" class="nav-sub-link" data-id="section-11-1" onclick="handleNavClick(event, 'section-11-1')">
         <span class="sub-dot"></span>
-        <span class="sub-title">11.1 38 项策略核心控制参数端到端流向总表</span>
+        <span class="sub-title">11.1 40 项策略核心控制参数端到端流向总表</span>
       </a>
       <a href="#section-11-2" class="nav-sub-link" data-id="section-11-2" onclick="handleNavClick(event, 'section-11-2')">
         <span class="sub-dot"></span>
@@ -2297,7 +2305,7 @@
 </ul>
 </li>
 <li><a href="#11-%E9%99%84%E5%BD%95%E5%9B%9E%E6%B5%8B%E5%85%A8%E5%8F%82%E6%95%B0%E5%85%A8%E6%8C%87%E6%A0%87%E7%AB%AF%E5%88%B0%E7%AB%AF%E6%95%B0%E6%8D%AE%E6%B5%81%E5%90%91%E4%B8%8E%E5%8F%98%E9%87%8F%E9%80%9F%E6%9F%A5%E6%80%BB%E8%A1%A8">附录：回测全参数全指标端到端数据流向与变量速查总表</a><ul>
-<li>11.1 38 项策略核心控制参数端到端流向总表</li>
+<li>11.1 40 项策略核心控制参数端到端流向总表</li>
 <li>11.2 34 项回测评估指标端到端流向总表</li>
 </ul>
 </li>
@@ -2372,36 +2380,36 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">import pandas as pd</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"><span class="hljs-keyword">def</span> <span class="hljs-title function_">minimal_backtest</span>(<span class="hljs-params">df: pd.DataFrame, initial_cash: <span class="hljs-built_in">float</span> = <span class="hljs-number">100000.0</span></span>):</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">def minimal_backtest(df: pd.DataFrame, initial_cash: float = 100000.0):</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    cash = initial_cash</span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    shares = <span class="hljs-number">0</span></span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    shares = 0</span></div>
 <div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    records = []</span></div>
 <div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    <span class="hljs-keyword">for</span> date, row <span class="hljs-keyword">in</span> df.iterrows():</span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">        close = row[<span class="hljs-string">&#x27;close&#x27;</span>]</span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">        signal = row[<span class="hljs-string">&#x27;signal&#x27;</span>]  <span class="hljs-comment"># 1 为买入，0 为平仓观望</span></span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    for date, row in df.iterrows():</span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">        close = row['close']</span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">        signal = row['signal']  # 1 为买入，0 为平仓观望</span></div>
 <div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">        <span class="hljs-comment"># 1. 状态转移：执行交易动作</span></span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">        <span class="hljs-keyword">if</span> signal == <span class="hljs-number">1</span> <span class="hljs-keyword">and</span> shares == <span class="hljs-number">0</span>:</span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">            shares = <span class="hljs-built_in">int</span>(cash // close)       <span class="hljs-comment"># 满仓买入</span></span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">        # 1. 状态转移：执行交易动作</span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">        if signal == 1 and shares == 0:</span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">            shares = int(cash // close)       # 满仓买入</span></div>
 <div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">            cash -= shares * close</span></div>
-<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">        <span class="hljs-keyword">elif</span> signal == <span class="hljs-number">0</span> <span class="hljs-keyword">and</span> shares &gt; <span class="hljs-number">0</span>:</span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">            cash += shares * close            <span class="hljs-comment"># 全部平仓</span></span></div>
-<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">            shares = <span class="hljs-number">0</span></span></div>
+<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">        elif signal == 0 and shares &gt; 0:</span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">            cash += shares * close            # 全部平仓</span></div>
+<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">            shares = 0</span></div>
 <div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">        <span class="hljs-comment"># 2. 逐日盯市：结算每日总市值</span></span></div>
+<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">        # 2. 逐日盯市：结算每日总市值</span></div>
 <div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">        portfolio_value = cash + shares * close</span></div>
 <div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text">        records.append({</span></div>
-<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">            <span class="hljs-string">&#x27;date&#x27;</span>: date,</span></div>
-<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">            <span class="hljs-string">&#x27;portfolio_value&#x27;</span>: portfolio_value,</span></div>
-<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">            <span class="hljs-string">&#x27;cash&#x27;</span>: cash,</span></div>
-<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text">            <span class="hljs-string">&#x27;shares&#x27;</span>: shares,</span></div>
-<div class="code-line"><span class="line-num" data-line="27">27</span><span class="line-text">            <span class="hljs-string">&#x27;close&#x27;</span>: close</span></div>
+<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">            'date': date,</span></div>
+<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">            'portfolio_value': portfolio_value,</span></div>
+<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">            'cash': cash,</span></div>
+<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text">            'shares': shares,</span></div>
+<div class="code-line"><span class="line-num" data-line="27">27</span><span class="line-text">            'close': close</span></div>
 <div class="code-line"><span class="line-num" data-line="28">28</span><span class="line-text">        })</span></div>
 <div class="code-line"><span class="line-num" data-line="29">29</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="30">30</span><span class="line-text">    <span class="hljs-keyword">return</span> pd.DataFrame(records).set_index(<span class="hljs-string">&#x27;date&#x27;</span>)</span></div></div>
+<div class="code-line"><span class="line-num" data-line="30">30</span><span class="line-text">    return pd.DataFrame(records).set_index('date')</span></div></div>
   </div>
 </div>
 <h3 id="section-1-3" class="doc-heading doc-heading-3">
@@ -2528,57 +2536,57 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-keyword">def</span> <span class="hljs-title function_">backtest_with_friction</span>(<span class="hljs-params">df: pd.DataFrame, initial_cash: <span class="hljs-built_in">float</span> = <span class="hljs-number">100000.0</span></span>):</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">def backtest_with_friction(df: pd.DataFrame, initial_cash: float = 100000.0):</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    cash = initial_cash</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    shares = <span class="hljs-number">0</span></span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    shares = 0</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    records = []</span></div>
 <div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    <span class="hljs-comment"># 市场规则常量</span></span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">    LOT_SIZE = <span class="hljs-number">100</span>           <span class="hljs-comment"># A 股 100 股整手</span></span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    SLIPPAGE = <span class="hljs-number">0.001</span>         <span class="hljs-comment"># 0.1% 滑点冲击</span></span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">    COMMISSION_RATE = <span class="hljs-number">0.0003</span> <span class="hljs-comment"># 万分之三佣金</span></span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">    MIN_COMMISSION = <span class="hljs-number">5.0</span>     <span class="hljs-comment"># 最低 5 元保底</span></span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">    STAMP_DUTY_RATE = <span class="hljs-number">0.0005</span> <span class="hljs-comment"># 卖方印花税千分之五</span></span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    # 市场规则常量</span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">    LOT_SIZE = 100           # A 股 100 股整手</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    SLIPPAGE = 0.001         # 0.1% 滑点冲击</span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">    COMMISSION_RATE = 0.0003 # 万分之三佣金</span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">    MIN_COMMISSION = 5.0     # 最低 5 元保底</span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">    STAMP_DUTY_RATE = 0.0005 # 卖方印花税千分之五</span></div>
 <div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">    <span class="hljs-keyword">for</span> date, row <span class="hljs-keyword">in</span> df.iterrows():</span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">        open_price = row[<span class="hljs-string">&#x27;open&#x27;</span>]</span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">        signal = row[<span class="hljs-string">&#x27;signal&#x27;</span>]</span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">    for date, row in df.iterrows():</span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">        open_price = row['open']</span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">        signal = row['signal']</span></div>
 <div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">        <span class="hljs-comment"># 1. 买入撮合 (考虑买入滑点与整手截断)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">        <span class="hljs-keyword">if</span> signal == <span class="hljs-number">1</span> <span class="hljs-keyword">and</span> shares == <span class="hljs-number">0</span>:</span></div>
-<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text">            buy_price = open_price * (<span class="hljs-number">1</span> + SLIPPAGE)</span></div>
-<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">            <span class="hljs-comment"># 预留 2% 资金作为手续费安全垫</span></span></div>
-<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">            max_shares = <span class="hljs-built_in">int</span>((cash * <span class="hljs-number">0.98</span>) // buy_price)</span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">        # 1. 买入撮合 (考虑买入滑点与整手截断)</span></div>
+<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">        if signal == 1 and shares == 0:</span></div>
+<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text">            buy_price = open_price * (1 + SLIPPAGE)</span></div>
+<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">            # 预留 2% 资金作为手续费安全垫</span></div>
+<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">            max_shares = int((cash * 0.98) // buy_price)</span></div>
 <div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text">            shares_to_buy = (max_shares // LOT_SIZE) * LOT_SIZE</span></div>
 <div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">            </span></div>
-<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">            <span class="hljs-keyword">if</span> shares_to_buy &gt;= LOT_SIZE:</span></div>
+<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">            if shares_to_buy &gt;= LOT_SIZE:</span></div>
 <div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">                trade_value = shares_to_buy * buy_price</span></div>
-<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text">                commission = <span class="hljs-built_in">max</span>(trade_value * COMMISSION_RATE, MIN_COMMISSION)</span></div>
+<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text">                commission = max(trade_value * COMMISSION_RATE, MIN_COMMISSION)</span></div>
 <div class="code-line"><span class="line-num" data-line="27">27</span><span class="line-text">                total_cost = trade_value + commission</span></div>
-<div class="code-line"><span class="line-num" data-line="28">28</span><span class="line-text">                <span class="hljs-keyword">if</span> cash &gt;= total_cost:</span></div>
+<div class="code-line"><span class="line-num" data-line="28">28</span><span class="line-text">                if cash &gt;= total_cost:</span></div>
 <div class="code-line"><span class="line-num" data-line="29">29</span><span class="line-text">                    shares = shares_to_buy</span></div>
 <div class="code-line"><span class="line-num" data-line="30">30</span><span class="line-text">                    cash -= total_cost</span></div>
 <div class="code-line"><span class="line-num" data-line="31">31</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="32">32</span><span class="line-text">        <span class="hljs-comment"># 2. 卖出撮合 (考虑卖出滑点、印花税与佣金)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="33">33</span><span class="line-text">        <span class="hljs-keyword">elif</span> signal == <span class="hljs-number">0</span> <span class="hljs-keyword">and</span> shares &gt; <span class="hljs-number">0</span>:</span></div>
-<div class="code-line"><span class="line-num" data-line="34">34</span><span class="line-text">            sell_price = open_price * (<span class="hljs-number">1</span> - SLIPPAGE)</span></div>
+<div class="code-line"><span class="line-num" data-line="32">32</span><span class="line-text">        # 2. 卖出撮合 (考虑卖出滑点、印花税与佣金)</span></div>
+<div class="code-line"><span class="line-num" data-line="33">33</span><span class="line-text">        elif signal == 0 and shares &gt; 0:</span></div>
+<div class="code-line"><span class="line-num" data-line="34">34</span><span class="line-text">            sell_price = open_price * (1 - SLIPPAGE)</span></div>
 <div class="code-line"><span class="line-num" data-line="35">35</span><span class="line-text">            trade_value = shares * sell_price</span></div>
-<div class="code-line"><span class="line-num" data-line="36">36</span><span class="line-text">            commission = <span class="hljs-built_in">max</span>(trade_value * COMMISSION_RATE, MIN_COMMISSION)</span></div>
+<div class="code-line"><span class="line-num" data-line="36">36</span><span class="line-text">            commission = max(trade_value * COMMISSION_RATE, MIN_COMMISSION)</span></div>
 <div class="code-line"><span class="line-num" data-line="37">37</span><span class="line-text">            stamp_duty = trade_value * STAMP_DUTY_RATE</span></div>
 <div class="code-line"><span class="line-num" data-line="38">38</span><span class="line-text">            net_proceeds = trade_value - commission - stamp_duty</span></div>
 <div class="code-line"><span class="line-num" data-line="39">39</span><span class="line-text">            </span></div>
 <div class="code-line"><span class="line-num" data-line="40">40</span><span class="line-text">            cash += net_proceeds</span></div>
-<div class="code-line"><span class="line-num" data-line="41">41</span><span class="line-text">            shares = <span class="hljs-number">0</span></span></div>
+<div class="code-line"><span class="line-num" data-line="41">41</span><span class="line-text">            shares = 0</span></div>
 <div class="code-line"><span class="line-num" data-line="42">42</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="43">43</span><span class="line-text">        <span class="hljs-comment"># 3. 逐日盯市</span></span></div>
-<div class="code-line"><span class="line-num" data-line="44">44</span><span class="line-text">        close_price = row[<span class="hljs-string">&#x27;close&#x27;</span>]</span></div>
+<div class="code-line"><span class="line-num" data-line="43">43</span><span class="line-text">        # 3. 逐日盯市</span></div>
+<div class="code-line"><span class="line-num" data-line="44">44</span><span class="line-text">        close_price = row['close']</span></div>
 <div class="code-line"><span class="line-num" data-line="45">45</span><span class="line-text">        portfolio_value = cash + shares * close_price</span></div>
 <div class="code-line"><span class="line-num" data-line="46">46</span><span class="line-text">        records.append({</span></div>
-<div class="code-line"><span class="line-num" data-line="47">47</span><span class="line-text">            <span class="hljs-string">&#x27;date&#x27;</span>: date, <span class="hljs-string">&#x27;portfolio_value&#x27;</span>: portfolio_value,</span></div>
-<div class="code-line"><span class="line-num" data-line="48">48</span><span class="line-text">            <span class="hljs-string">&#x27;cash&#x27;</span>: cash, <span class="hljs-string">&#x27;shares&#x27;</span>: shares</span></div>
+<div class="code-line"><span class="line-num" data-line="47">47</span><span class="line-text">            'date': date, 'portfolio_value': portfolio_value,</span></div>
+<div class="code-line"><span class="line-num" data-line="48">48</span><span class="line-text">            'cash': cash, 'shares': shares</span></div>
 <div class="code-line"><span class="line-num" data-line="49">49</span><span class="line-text">        })</span></div>
 <div class="code-line"><span class="line-num" data-line="50">50</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="51">51</span><span class="line-text">    <span class="hljs-keyword">return</span> pd.DataFrame(records).set_index(<span class="hljs-string">&#x27;date&#x27;</span>)</span></div></div>
+<div class="code-line"><span class="line-num" data-line="51">51</span><span class="line-text">    return pd.DataFrame(records).set_index('date')</span></div></div>
   </div>
 </div>
 <hr>
@@ -2627,19 +2635,19 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-comment"># 1. 波动率与真实波幅：截至 t-1 收盘计算，在 t 日使用</span></span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">vol_raw = hist_work[<span class="hljs-string">&#x27;daily_return&#x27;</span>].rolling(window=<span class="hljs-number">14</span>).std()</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">hist_work[<span class="hljs-string">&#x27;volatility&#x27;</span>] = vol_raw.shift(<span class="hljs-number">1</span>)</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"># 1. 波动率与真实波幅：截至 t-1 收盘计算，在 t 日使用</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">vol_raw = hist_work['daily_return'].rolling(window=14).std()</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">hist_work['volatility'] = vol_raw.shift(1)</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">atr_raw = true_range.rolling(window=<span class="hljs-number">14</span>).mean()</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">hist_work[<span class="hljs-string">&#x27;atr&#x27;</span>] = atr_raw.shift(<span class="hljs-number">1</span>)</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">atr_raw = true_range.rolling(window=14).mean()</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">hist_work['atr'] = atr_raw.shift(1)</span></div>
 <div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"><span class="hljs-comment"># 2. 收益率锚点：t 日决策时的最新基准收盘价为 close[t-1]</span></span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">hist_work[<span class="hljs-string">&#x27;close_prev&#x27;</span>] = hist_work[<span class="hljs-string">&#x27;close&#x27;</span>].shift(<span class="hljs-number">1</span>)</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"># 2. 收益率锚点：t 日决策时的最新基准收盘价为 close[t-1]</span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">hist_work['close_prev'] = hist_work['close'].shift(1)</span></div>
 <div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"><span class="hljs-comment"># 3. 均线趋势指标：统一 shift(1) 封死未来数据</span></span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">hist_work[<span class="hljs-string">&#x27;ma_fast&#x27;</span>] = hist_work[<span class="hljs-string">&#x27;close&#x27;</span>].rolling(<span class="hljs-number">20</span>).mean().shift(<span class="hljs-number">1</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">hist_work[<span class="hljs-string">&#x27;ma_slow&#x27;</span>] = hist_work[<span class="hljs-string">&#x27;close&#x27;</span>].rolling(<span class="hljs-number">60</span>).mean().shift(<span class="hljs-number">1</span>)</span></div></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"># 3. 均线趋势指标：统一 shift(1) 封死未来数据</span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">hist_work['ma_fast'] = hist_work['close'].rolling(20).mean().shift(1)</span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">hist_work['ma_slow'] = hist_work['close'].rolling(60).mean().shift(1)</span></div></div>
   </div>
 </div>
 <p><strong>时间轴因果流转关系</strong>：</p>
@@ -2996,21 +3004,21 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-comment"># 1. 原始预期收益率 (基于 t-1 真实收盘锚点)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">df[<span class="hljs-string">&#x27;expected_return&#x27;</span>] = (df[<span class="hljs-string">&#x27;pred_close&#x27;</span>] - df[<span class="hljs-string">&#x27;close_prev&#x27;</span>]) / df[<span class="hljs-string">&#x27;close_prev&#x27;</span>]</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"># 1. 原始预期收益率 (基于 t-1 真实收盘锚点)</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">df['expected_return'] = (df['pred_close'] - df['close_prev']) / df['close_prev']</span></div>
 <div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"><span class="hljs-comment"># 2. 滚动偏差统计 (统计过去 60 个交易日预测误差的中位数，同样严格 shift(1))</span></span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">err = df[<span class="hljs-string">&#x27;expected_return&#x27;</span>] - (df[<span class="hljs-string">&#x27;close&#x27;</span>] - df[<span class="hljs-string">&#x27;close_prev&#x27;</span>]) / df[<span class="hljs-string">&#x27;close_prev&#x27;</span>]</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">bias = err.shift(<span class="hljs-number">1</span>).rolling(calib_window=<span class="hljs-number">60</span>, min_periods=<span class="hljs-number">15</span>).median()</span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">df[<span class="hljs-string">&#x27;pred_bias&#x27;</span>] = bias.fillna(<span class="hljs-number">0.0</span>)</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"># 2. 滚动偏差统计 (统计过去 60 个交易日预测误差的中位数，同样严格 shift(1))</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">err = df['expected_return'] - (df['close'] - df['close_prev']) / df['close_prev']</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">bias = err.shift(1).rolling(calib_window=60, min_periods=15).median()</span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">df['pred_bias'] = bias.fillna(0.0)</span></div>
 <div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text"><span class="hljs-comment"># 3. 反转感知自适应去偏 (Reversal-Aware De-biasing)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"><span class="hljs-comment"># 顺势行情严格扣减系统性泡沫；而在底部/顶部反转时，阻断滞后历史偏差对反转 Alpha 的误杀</span></span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"><span class="hljs-comment"># reversal_mask: 下跌背景且预测向上反转 (is_bull_reversal &amp; pred_bias &gt; 0)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text"><span class="hljs-comment">#                或上涨背景且预测向下拐头 (is_bear_reversal &amp; pred_bias &lt; 0)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">bias_weight = np.where(reversal_mask, reversal_debias_weight, <span class="hljs-number">1.0</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">df[<span class="hljs-string">&#x27;pred_bias_effective&#x27;</span>] = df[<span class="hljs-string">&#x27;pred_bias&#x27;</span>] * bias_weight</span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">df[<span class="hljs-string">&#x27;expected_return_adj&#x27;</span>] = df[<span class="hljs-string">&#x27;expected_return&#x27;</span>] - df[<span class="hljs-string">&#x27;pred_bias_effective&#x27;</span>]</span></div></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text"># 3. 反转感知自适应去偏 (Reversal-Aware De-biasing)</span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"># 顺势行情严格扣减系统性泡沫；而在底部/顶部反转时，阻断滞后历史偏差对反转 Alpha 的误杀</span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"># reversal_mask: 下跌背景且预测向上反转 (is_bull_reversal &amp; pred_bias &gt; 0)</span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">#                或上涨背景且预测向下拐头 (is_bear_reversal &amp; pred_bias &lt; 0)</span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">bias_weight = np.where(reversal_mask, reversal_debias_weight, 1.0)</span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">df['pred_bias_effective'] = df['pred_bias'] * bias_weight</span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">df['expected_return_adj'] = df['expected_return'] - df['pred_bias_effective']</span></div></div>
   </div>
 </div>
 <h3 id="section-4-3" class="doc-heading doc-heading-3">
@@ -3064,7 +3072,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attr">signal_score</span> <span class="hljs-operator">=</span> expected_return_adj / volatility_scaled</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">signal_score = expected_return_adj / volatility_scaled</span></div></div>
   </div>
 </div>
 <p><code>signal_score</code> 已经通过双重标准化消除了标的横向个体波动率与纵向持仓时界差异，其本身就是一个严格的统计信噪比指标。系统采用<strong>绝对信噪比门槛筛选 (<code>z_score_threshold</code>)</strong>，彻底消除了滚动分位数在弱市“矮子拔将军”和强市“良机被限流”的缺陷，且无 60 天预热期要求：</p>
@@ -3086,17 +3094,17 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-comment"># 绝对信噪比门槛：净预期回报必须达到该时界随机漫步噪音标准差的 0.70 倍以上</span></span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">base_thresh = <span class="hljs-number">0.70</span></span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"><span class="hljs-keyword">if</span> particle_filter <span class="hljs-keyword">and</span> <span class="hljs-string">&#x27;pf_confidence&#x27;</span> <span class="hljs-keyword">in</span> df.columns:</span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    <span class="hljs-comment"># 粒子滤波安全边际调控：置信度低于 0.6 时动态上浮门槛</span></span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    pf_entry_penalty = np.where(df[<span class="hljs-string">&#x27;pf_confidence&#x27;</span>] &lt; <span class="hljs-number">0.6</span>, (<span class="hljs-number">0.6</span> - df[<span class="hljs-string">&#x27;pf_confidence&#x27;</span>]) * <span class="hljs-number">0.4</span>, <span class="hljs-number">0.0</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    df[<span class="hljs-string">&#x27;entry_threshold&#x27;</span>] = base_thresh + pf_entry_penalty</span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"><span class="hljs-keyword">else</span>:</span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    df[<span class="hljs-string">&#x27;entry_threshold&#x27;</span>] = base_thresh</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"># 绝对信噪比门槛：净预期回报必须达到该时界随机漫步噪音标准差的 0.70 倍以上</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">base_thresh = 0.70</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">if particle_filter and 'pf_confidence' in df.columns:</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    # 粒子滤波安全边际调控：置信度低于 0.6 时动态上浮门槛</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    pf_entry_penalty = np.where(df['pf_confidence'] &lt; 0.6, (0.6 - df['pf_confidence']) * 0.4, 0.0)</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    df['entry_threshold'] = base_thresh + pf_entry_penalty</span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">else:</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    df['entry_threshold'] = base_thresh</span></div>
 <div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"><span class="hljs-comment"># 只要绝对信噪比达标，即可取得买入候选资格</span></span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">candidate_buy = df[<span class="hljs-string">&#x27;signal_score&#x27;</span>] &gt; df[<span class="hljs-string">&#x27;entry_threshold&#x27;</span>]</span></div></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"># 只要绝对信噪比达标，即可取得买入候选资格</span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">candidate_buy = df['signal_score'] &gt; df['entry_threshold']</span></div></div>
   </div>
 </div>
 <h4 id="heading-23" class="doc-heading doc-heading-4">
@@ -3235,7 +3243,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">vol_stress</span> = clip((ann_vol - <span class="hljs-number">0</span>.<span class="hljs-number">20</span>) / (<span class="hljs-number">0</span>.<span class="hljs-number">40</span> - <span class="hljs-number">0</span>.<span class="hljs-number">20</span>), <span class="hljs-number">0</span>.<span class="hljs-number">0</span>, <span class="hljs-number">1</span>.<span class="hljs-number">0</span>)</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">vol_stress = clip((ann_vol - 0.20) / (0.40 - 0.20), 0.0, 1.0)</span></div></div>
   </div>
 </div>
 <ul>
@@ -3260,7 +3268,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">dyn_calib_window = round<span class="hljs-punctuation">(</span><span class="hljs-number">60</span> - vol_stress * <span class="hljs-punctuation">(</span><span class="hljs-number">60</span> - <span class="hljs-number">20</span><span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">dyn_calib_window = round(60 - vol_stress * (60 - 20))</span></div></div>
   </div>
 </div>
 <h4 id="section-3" class="doc-heading doc-heading-4">
@@ -3350,7 +3358,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">min_periods = max<span class="hljs-punctuation">(</span><span class="hljs-number">8</span>, int<span class="hljs-punctuation">(</span>dyn_calib_window * <span class="hljs-number">0</span>.<span class="hljs-number">25</span><span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">min_periods = max(8, int(dyn_calib_window * 0.25))</span></div></div>
   </div>
 </div>
 <p>即使窗口在极端黑天鹅下收缩至 20 天，仍保留至少 8 个交易日的有效统计量，兼顾极端行情的“急速调优”与“统计防失真”。</p>
@@ -3441,8 +3449,8 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">ESS</span> = <span class="hljs-number">1</span>.<span class="hljs-number">0</span> / sum(weights ** <span class="hljs-number">2</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text"><span class="hljs-attribute">pf_confidence</span> = clip(ESS / n_samples, <span class="hljs-number">0</span>.<span class="hljs-number">1</span>, <span class="hljs-number">1</span>.<span class="hljs-number">0</span>)</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">ESS = 1.0 / sum(weights ** 2)</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">pf_confidence = clip(ESS / n_samples, 0.1, 1.0)</span></div></div>
   </div>
 </div>
 <ul>
@@ -3731,27 +3739,27 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">[候选条件] signal_score &gt; entry_threshold <span class="hljs-punctuation">(</span>信噪比达标<span class="hljs-punctuation">)</span></span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">[候选条件] signal_score &gt; entry_threshold (信噪比达标)</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">[审查 ①] 绝对信噪比门槛审查          <span class="hljs-punctuation">(</span>否决原因: 信噪比未达标<span class="hljs-punctuation">(</span>signal_score&lt;=threshold<span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">[审查 ①] 绝对信噪比门槛审查          (否决原因: 信噪比未达标(signal_score&lt;=threshold))</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">[审查 ②] 粒子不确定性加罚审查            <span class="hljs-punctuation">(</span>门槛自适应上浮惩罚<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">[审查 ②] 粒子不确定性加罚审查            (门槛自适应上浮惩罚)</span></div>
 <div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">[审查 ③] 预测路径全局斜率 pred_slope &gt; <span class="hljs-number">0</span>  <span class="hljs-punctuation">(</span>否决原因: 预测斜率向下<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">[审查 ③] 预测路径全局斜率 pred_slope &gt; 0  (否决原因: 预测斜率向下)</span></div>
 <div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">[审查 ④] T+N 规则与波峰可兑现性校验      <span class="hljs-punctuation">(</span>否决原因: 预测波峰时界&lt;=<span class="hljs-number">1</span>日<span class="hljs-punctuation">(</span>T+N无法波峰离场<span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">[审查 ④] T+N 规则与波峰可兑现性校验      (否决原因: 预测波峰时界&lt;=1日(T+N无法波峰离场))</span></div>
 <div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">[审查 ⑤] 大趋势均线多头确认 <span class="hljs-punctuation">(</span>Regime<span class="hljs-punctuation">)</span>      <span class="hljs-punctuation">(</span>否决原因: 下跌趋势且无短期确认<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">[审查 ⑤] 大趋势均线多头确认 (Regime)      (否决原因: 下跌趋势且无短期确认)</span></div>
 <div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">[审查 ⑥] 去偏后净预期回报必须为正        <span class="hljs-punctuation">(</span>否决原因: 去偏后预期收益为负<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">[审查 ⑥] 去偏后净预期回报必须为正        (否决原因: 去偏后预期收益为负)</span></div>
 <div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">[审查 ⑦] 路径下探深度与仓位缩减          <span class="hljs-punctuation">(</span>否决原因: 预测下探过深或粒子置信度过低<span class="hljs-punctuation">(</span>仓位系数为<span class="hljs-number">0</span><span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">[审查 ⑦] 路径下探深度与仓位缩减          (否决原因: 预测下探过深或粒子置信度过低(仓位系数为0))</span></div>
 <div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">[审查 ⑧] 粒子置信度极低硬红线拦截        <span class="hljs-punctuation">(</span>否决原因: 粒子滤波置信度过低<span class="hljs-punctuation">(</span>&lt;<span class="hljs-number">35</span>%<span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">[审查 ⑧] 粒子置信度极低硬红线拦截        (否决原因: 粒子滤波置信度过低(&lt;35%))</span></div>
 <div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text">[审查 ⑨] 开盘流动性与涨停可交易性        <span class="hljs-punctuation">(</span>否决原因: 开盘封涨停无法买入<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text">[审查 ⑨] 开盘流动性与涨停可交易性        (否决原因: 开盘封涨停无法买入)</span></div>
 <div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">[最终执行] raw_signal = <span class="hljs-number">1</span>, exec_signal = <span class="hljs-number">1</span>, veto_reason = <span class="hljs-string">&quot;&quot;</span></span></div></div>
+<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">[最终执行] raw_signal = 1, exec_signal = 1, veto_reason = ""</span></div></div>
   </div>
 </div>
 <h3 id="section-5-3" class="doc-heading doc-heading-3">
@@ -4113,25 +4121,25 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-comment"># 1. 确定本笔交易承担的风险资金额度 (总净值的 1%，乘以动态仓位系数 scale)</span></span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"># 1. 确定本笔交易承担的风险资金额度 (总净值的 1%，乘以动态仓位系数 scale)</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">risk_budget = portfolio_value * risk_per_trade * scale</span></div>
 <div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"><span class="hljs-comment"># 2. 确定生效止损百分比 (结合 1.5 倍 ATR 真实波幅与基准硬止损线)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">active_stop_pct = clip(<span class="hljs-number">1.5</span> * atr_pct, <span class="hljs-number">0.02</span>, <span class="hljs-number">0.12</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text"><span class="hljs-comment"># 若未指定动态 ATR，则取基准 hard_stop_loss (默认 4.0%)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"># 2. 确定生效止损百分比 (结合 1.5 倍 ATR 真实波幅与基准硬止损线)</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">active_stop_pct = clip(1.5 * atr_pct, 0.02, 0.12)</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text"># 若未指定动态 ATR，则取基准 hard_stop_loss (默认 4.0%)</span></div>
 <div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"><span class="hljs-comment"># 3. 计算止损价格空间 (每股允许亏损的绝对金额)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"># 3. 计算止损价格空间 (每股允许亏损的绝对金额)</span></div>
 <div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">stop_distance = buy_price * active_stop_pct</span></div>
 <div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"><span class="hljs-comment"># 4. 反推理论可买股数</span></span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"># 4. 反推理论可买股数</span></div>
 <div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">raw_shares = risk_budget / stop_distance</span></div>
 <div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text"><span class="hljs-comment"># 5. 三重物理约束截断</span></span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">cap_by_pct  = (portfolio_value * max_position_pct) / buy_price <span class="hljs-comment"># 80% 仓位上限</span></span></div>
-<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">cap_by_cash = (cash * <span class="hljs-number">0.98</span>) / buy_price                        <span class="hljs-comment"># 可用现金约束</span></span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">allowed_shares = <span class="hljs-built_in">min</span>(raw_shares, cap_by_pct, cap_by_cash)</span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text"># 5. 三重物理约束截断</span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">cap_by_pct  = (portfolio_value * max_position_pct) / buy_price # 80% 仓位上限</span></div>
+<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">cap_by_cash = (cash * 0.98) / buy_price                        # 可用现金约束</span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">allowed_shares = min(raw_shares, cap_by_pct, cap_by_cash)</span></div>
 <div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text"><span class="hljs-comment"># 6. 整手向下取整 (A 股整除 100)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text"># 6. 整手向下取整 (A 股整除 100)</span></div>
 <div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">shares_to_buy = profile.round_shares(allowed_shares)</span></div></div>
   </div>
 </div>
@@ -4296,10 +4304,10 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-keyword">if</span> shares_to_buy &lt; profile.lot_size <span class="hljs-keyword">and</span> min_lot_guarantee:</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">if shares_to_buy &lt; profile.lot_size and min_lot_guarantee:</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    one_lot_cost = profile.lot_size * buy_price</span></div>
 <div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    one_lot_total = one_lot_cost + profile.buy_cost(one_lot_cost, trade_date=date)</span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    <span class="hljs-keyword">if</span> cash &gt;= one_lot_total <span class="hljs-keyword">and</span> (one_lot_cost &lt;= portfolio_value * max_position_pct):</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    if cash &gt;= one_lot_total and (one_lot_cost &lt;= portfolio_value * max_position_pct):</span></div>
 <div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">        shares_to_buy = profile.lot_size</span></div></div>
   </div>
 </div>
@@ -4379,23 +4387,23 @@
   </div>
   <div class="code-viewport">
     <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">graph TD</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    <span class="hljs-title class_">Hold</span>[持仓状态机追踪] --&gt; <span class="hljs-title class_">Intraday</span>{当日盘中 low &lt;= stop_price ?}</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    <span class="hljs-title class_">Intraday</span> -- 是 (且允许交易) --&gt; <span class="hljs-title class_">IntradayExit</span>[盘中止损成交: 以止损价或开盘价结算]</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    Hold[持仓状态机追踪] --&gt; Intraday{当日盘中 low &lt;= stop_price ?}</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    Intraday -- 是 (且允许交易) --&gt; IntradayExit[盘中止损成交: 以止损价或开盘价结算]</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    </span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    <span class="hljs-title class_">Intraday</span> -- 否 --&gt; <span class="hljs-title class_">CloseCheck</span>[收盘扫描]</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    <span class="hljs-title class_">CloseCheck</span> --&gt; <span class="hljs-title class_">Rule1</span>{收盘亏损 &gt;= active_stop_pct ?}</span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">    <span class="hljs-title class_">Rule1</span> -- 是 --&gt; <span class="hljs-title class_">Action1</span>[硬止损挂单: 次日开盘卖出]</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    Intraday -- 否 --&gt; CloseCheck[收盘扫描]</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    CloseCheck --&gt; Rule1{收盘亏损 &gt;= active_stop_pct ?}</span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">    Rule1 -- 是 --&gt; Action1[硬止损挂单: 次日开盘卖出]</span></div>
 <div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    </span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">    <span class="hljs-title class_">Rule1</span> -- 否 --&gt; <span class="hljs-title class_">Rule2</span>{浮盈 &gt; <span class="hljs-number">2</span>% 且 峰值回撤 &gt;= <span class="hljs-number">2.5</span>% ?}</span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">    <span class="hljs-title class_">Rule2</span> -- 是 --&gt; <span class="hljs-title class_">Action2</span>[移动止盈 <span class="hljs-title class_">Trailing</span> <span class="hljs-title class_">Stop</span>: 锁定利润]</span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">    Rule1 -- 否 --&gt; Rule2{浮盈 &gt; 2% 且 峰值回撤 &gt;= 2.5% ?}</span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">    Rule2 -- 是 --&gt; Action2[移动止盈 Trailing Stop: 锁定利润]</span></div>
 <div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">    </span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">    <span class="hljs-title class_">Rule2</span> -- 否 --&gt; <span class="hljs-title class_">Rule3</span>{持仓天数 &gt;= optimal_horizon ?}</span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">    <span class="hljs-title class_">Rule3</span> -- 浮亏 --&gt; <span class="hljs-title class_">Action3</span>[时间止损: 波峰已过假说证伪, 坚决离场]</span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">    <span class="hljs-title class_">Rule3</span> -- 浮盈滞涨 --&gt; <span class="hljs-title class_">Action4</span>[波峰离场: 达成目标获利了结]</span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">    <span class="hljs-title class_">Rule3</span> -- 浮盈且动量极强 --&gt; <span class="hljs-title class_">Jump</span>[🚀 动量跃迁: 移交收紧移动止盈护航, 顺延至最大持仓日]</span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">    Rule2 -- 否 --&gt; Rule3{持仓天数 &gt;= optimal_horizon ?}</span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">    Rule3 -- 浮亏 --&gt; Action3[时间止损: 波峰已过假说证伪, 坚决离场]</span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">    Rule3 -- 浮盈滞涨 --&gt; Action4[波峰离场: 达成目标获利了结]</span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">    Rule3 -- 浮盈且动量极强 --&gt; Jump[🚀 动量跃迁: 移交收紧移动止盈护航, 顺延至最大持仓日]</span></div>
 <div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">    </span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">    <span class="hljs-title class_">Rule3</span> -- 未到期 --&gt; <span class="hljs-title class_">Rule4</span>{持仓满 <span class="hljs-number">15</span> 天 或 模型转空 ?}</span></div>
-<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">    <span class="hljs-title class_">Rule4</span> -- 是 --&gt; <span class="hljs-title class_">Action5</span>[超时强平 / 主动避险离场]</span></div></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">    Rule3 -- 未到期 --&gt; Rule4{持仓满 15 天 或 模型转空 ?}</span></div>
+<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">    Rule4 -- 是 --&gt; Action5[超时强平 / 主动避险离场]</span></div></div>
   </div>
 </div>
   </div>
@@ -4755,13 +4763,13 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-string">[1. 历史数据 hist_df]</span> + <span class="hljs-string">[2. AI预测 pred_df]</span></span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">[1. 历史数据 hist_df] + [2. AI预测 pred_df]</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">           <span class="hljs-string">[3. 信号矩阵 signal_df]</span></span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">           [3. 信号矩阵 signal_df]</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">                    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text"><span class="hljs-string">[4. 逐日净值 backtest_df]</span> + <span class="hljs-string">[5. 交易台账 trades]</span></span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">[4. 逐日净值 backtest_df] + [5. 交易台账 trades]</span></div>
 <div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">                    ↓</span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">           <span class="hljs-string">[6. 绩效评价 metrics]</span></span></div></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">           [6. 绩效评价 metrics]</span></div></div>
   </div>
 </div>
 <hr>
@@ -4903,10 +4911,10 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">sum_w_sq</span> = sum(weights ** <span class="hljs-number">2</span>) = <span class="hljs-number">0</span>.<span class="hljs-number">0658</span></span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text"><span class="hljs-attribute">ESS</span> = <span class="hljs-number">1</span>.<span class="hljs-number">0</span> / <span class="hljs-number">0</span>.<span class="hljs-number">0658</span> = <span class="hljs-number">15</span>.<span class="hljs-number">20</span> (在 <span class="hljs-number">20</span> 条粒子中等效有 <span class="hljs-number">15</span>.<span class="hljs-number">2</span> 条有效样本)</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"><span class="hljs-attribute">pf_confidence</span> = clip(ESS / <span class="hljs-number">20</span>, <span class="hljs-number">0</span>.<span class="hljs-number">1</span>, <span class="hljs-number">1</span>.<span class="hljs-number">0</span>) = <span class="hljs-number">15</span>.<span class="hljs-number">20</span> / <span class="hljs-number">20</span> = <span class="hljs-number">0</span>.<span class="hljs-number">760</span> (即 <span class="hljs-number">76</span>.<span class="hljs-number">0</span>%)</span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"><span class="hljs-attribute">pf_val_error</span> = <span class="hljs-number">0</span>.<span class="hljs-number">0115</span> (验证期平均加权相对误差 <span class="hljs-number">1</span>.<span class="hljs-number">15</span>%)</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">sum_w_sq = sum(weights ** 2) = 0.0658</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">ESS = 1.0 / 0.0658 = 15.20 (在 20 条粒子中等效有 15.2 条有效样本)</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">pf_confidence = clip(ESS / 20, 0.1, 1.0) = 15.20 / 20 = 0.760 (即 76.0%)</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">pf_val_error = 0.0115 (验证期平均加权相对误差 1.15%)</span></div></div>
   </div>
 </div>
 </li>
@@ -4961,8 +4969,8 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">expected_return = <span class="hljs-punctuation">(</span>pred_close - close_prev<span class="hljs-punctuation">)</span> / close_prev</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                = <span class="hljs-punctuation">(</span><span class="hljs-number">28</span>.<span class="hljs-number">920</span> - <span class="hljs-number">28</span>.<span class="hljs-number">100</span><span class="hljs-punctuation">)</span> / <span class="hljs-number">28</span>.<span class="hljs-number">100</span> = +<span class="hljs-number">0</span>.<span class="hljs-number">02918</span> <span class="hljs-punctuation">(</span>+<span class="hljs-number">2</span>.<span class="hljs-number">92</span>%<span class="hljs-punctuation">)</span></span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">expected_return = (pred_close - close_prev) / close_prev</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                = (28.920 - 28.100) / 28.100 = +0.02918 (+2.92%)</span></div></div>
   </div>
 </div>
 </li>
@@ -4987,7 +4995,7 @@
   </div>
   <div class="code-viewport">
     <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">expected_return_adj = expected_return - pred_bias</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                    = +<span class="hljs-number">0</span>.<span class="hljs-number">02918</span> - <span class="hljs-punctuation">(</span>+<span class="hljs-number">0</span>.<span class="hljs-number">00270</span><span class="hljs-punctuation">)</span> = +<span class="hljs-number">0</span>.<span class="hljs-number">02648</span> <span class="hljs-punctuation">(</span>+<span class="hljs-number">2</span>.<span class="hljs-number">65</span>%<span class="hljs-punctuation">)</span></span></div></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                    = +0.02918 - (+0.00270) = +0.02648 (+2.65%)</span></div></div>
   </div>
 </div>
 </li>
@@ -5038,8 +5046,8 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">s<span class="hljs-attr">ignal_score</span> <span class="hljs-operator">=</span> expected_return_adj <span class="hljs-symbol">/</span> volatility_scaled</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">             <span class="hljs-operator">=</span> <span class="hljs-operator">+</span><span class="hljs-number">0.02648</span> <span class="hljs-symbol">/</span> <span class="hljs-number">0.03724</span> <span class="hljs-operator">=</span> <span class="hljs-operator">+</span><span class="hljs-number">0.711</span> (信噪比得分)</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">signal_score = expected_return_adj / volatility_scaled</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">             = +0.02648 / 0.03724 = +0.711 (信噪比得分)</span></div></div>
   </div>
 </div>
 </li>
@@ -5101,7 +5109,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">buy_price</span> = <span class="hljs-number">28</span>.<span class="hljs-number">200</span> * (<span class="hljs-number">1</span> + <span class="hljs-number">0</span>.<span class="hljs-number">001</span>) = <span class="hljs-number">28</span>.<span class="hljs-number">228</span> 元</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">buy_price = 28.200 * (1 + 0.001) = 28.228 元</span></div></div>
   </div>
 </div>
 </li>
@@ -5135,7 +5143,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">raw_shares</span> = risk_budget / stop_distance = <span class="hljs-number">760</span>.<span class="hljs-number">00</span> / <span class="hljs-number">1</span>.<span class="hljs-number">129</span> = <span class="hljs-number">673</span>.<span class="hljs-number">16</span> 股</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">raw_shares = risk_budget / stop_distance = 760.00 / 1.129 = 673.16 股</span></div></div>
   </div>
 </div>
 </li>
@@ -5163,7 +5171,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">shares_to_buy</span> = int(<span class="hljs-number">673</span>.<span class="hljs-number">16</span> // <span class="hljs-number">100</span>) * <span class="hljs-number">100</span> = <span class="hljs-number">600</span> 股</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">shares_to_buy = int(673.16 // 100) * 100 = 600 股</span></div></div>
   </div>
 </div>
 </li>
@@ -5232,7 +5240,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">sell_price</span> = <span class="hljs-number">29</span>.<span class="hljs-number">800</span> * (<span class="hljs-number">1</span> - <span class="hljs-number">0</span>.<span class="hljs-number">001</span>) = <span class="hljs-number">29</span>.<span class="hljs-number">770</span> 元</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">sell_price = 29.800 * (1 - 0.001) = 29.770 元</span></div></div>
   </div>
 </div>
 </li>
@@ -5278,7 +5286,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-attribute">total_return</span> = (期末总资产 <span class="hljs-number">100</span>,<span class="hljs-number">905</span>.<span class="hljs-number">83</span> - 初始本金 <span class="hljs-number">100</span>,<span class="hljs-number">000</span>.<span class="hljs-number">00</span>) / <span class="hljs-number">100</span>,<span class="hljs-number">000</span>.<span class="hljs-number">00</span> = +<span class="hljs-number">0</span>.<span class="hljs-number">9058</span>%</span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">total_return = (期末总资产 100,905.83 - 初始本金 100,000.00) / 100,000.00 = +0.9058%</span></div></div>
   </div>
 </div>
 </li>
@@ -5381,13 +5389,13 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-selector-tag">flowchart</span> <span class="hljs-selector-tag">LR</span></span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    <span class="hljs-selector-tag">A</span><span class="hljs-selector-attr">[pred_df 预测数据]</span> <span class="hljs-selector-tag">--</span>&gt; <span class="hljs-selector-tag">B</span><span class="hljs-selector-attr">[9.1 evaluate_prediction_skill&lt;br/&gt;AI 预测前置体检]</span></span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    <span class="hljs-selector-tag">B</span> <span class="hljs-selector-tag">--</span>&gt;|未通过 <span class="hljs-selector-tag">&amp;</span> <span class="hljs-selector-tag">--require-skill</span>| <span class="hljs-selector-tag">C</span><span class="hljs-selector-attr">[抛出 ValueError 强行熔断]</span></span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    <span class="hljs-selector-tag">B</span> <span class="hljs-selector-tag">--</span>&gt;|体检通过 或 仅告警| <span class="hljs-selector-tag">D</span><span class="hljs-selector-attr">[回测撮合引擎模拟交易]</span></span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    <span class="hljs-selector-tag">D</span> <span class="hljs-selector-tag">--</span>&gt; <span class="hljs-selector-tag">E</span><span class="hljs-selector-attr">[backtest_df + trades]</span></span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    <span class="hljs-selector-tag">E</span> <span class="hljs-selector-tag">--</span>&gt; <span class="hljs-selector-tag">F</span><span class="hljs-selector-attr">[9.2 evaluate_metrics&lt;br/&gt;量化绩效严密评价]</span></span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">    <span class="hljs-selector-tag">F</span> <span class="hljs-selector-tag">--</span>&gt; <span class="hljs-selector-tag">G</span><span class="hljs-selector-attr">[研报与看板输出]</span></span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">flowchart LR</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">    A[pred_df 预测数据] --&gt; B[9.1 evaluate_prediction_skill&lt;br/&gt;AI 预测前置体检]</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">    B --&gt;|未通过 &amp; --require-skill| C[抛出 ValueError 强行熔断]</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">    B --&gt;|体检通过 或 仅告警| D[回测撮合引擎模拟交易]</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">    D --&gt; E[backtest_df + trades]</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    E --&gt; F[9.2 evaluate_metrics&lt;br/&gt;量化绩效严密评价]</span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">    F --&gt; G[研报与看板输出]</span></div></div>
   </div>
 </div>
   </div>
@@ -5574,7 +5582,7 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">profit_loss_ratio = sum<span class="hljs-punctuation">(</span>盈利交易实际金额<span class="hljs-punctuation">)</span> / abs<span class="hljs-punctuation">(</span>sum<span class="hljs-punctuation">(</span>亏损交易实际金额<span class="hljs-punctuation">)</span><span class="hljs-punctuation">)</span></span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">profit_loss_ratio = sum(盈利交易实际金额) / abs(sum(亏损交易实际金额))</span></div></div>
   </div>
 </div>
 忠实反映账户每承受 1 元亏损风险所换回的实际净利润金额。</li>
@@ -5864,18 +5872,18 @@
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-punctuation">{</span></span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">  <span class="hljs-attr">&quot;stock_code&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;300418&quot;</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">  <span class="hljs-attr">&quot;model_name&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;NeoQuasar/Kronos-base&quot;</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">  <span class="hljs-attr">&quot;test_days&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">120</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">  <span class="hljs-attr">&quot;lookback&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">120</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">  <span class="hljs-attr">&quot;forecast_horizon&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-string">&quot;auto&quot;</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">  <span class="hljs-attr">&quot;max_auto_horizon&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">10</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">  <span class="hljs-attr">&quot;step_size&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">1</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">  <span class="hljs-attr">&quot;sample_count&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">20</span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">  <span class="hljs-attr">&quot;particle_filter&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-literal"><span class="hljs-keyword">true</span></span><span class="hljs-punctuation">,</span></span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">  <span class="hljs-attr">&quot;pf_val_window&quot;</span><span class="hljs-punctuation">:</span> <span class="hljs-number">3</span></span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text"><span class="hljs-punctuation">}</span></span></div></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">{</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">  "stock_code": "300418",</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">  "model_name": "NeoQuasar/Kronos-base",</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">  "test_days": 120,</span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">  "lookback": 120,</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">  "forecast_horizon": "auto",</span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">  "max_auto_horizon": 10,</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">  "step_size": 1,</span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">  "sample_count": 20,</span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">  "particle_filter": true,</span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">  "pf_val_window": 3</span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">}</span></div></div>
   </div>
 </div>
 <p>当参数未变动时秒级复用本地缓存；加上 <code>--force-refresh</code> 参数时则强制重新推演。</p>
@@ -5884,7 +5892,7 @@
     <span class="heading-text">10.2 常用 CLI 命令行指令全集 (含硬件加速与日志治理)</span>
   </h3>
 
-<div class="code-card" data-raw="%23%201.%20%E6%8E%A8%E8%8D%90%EF%BC%9A%E4%B8%80%E9%94%AE%E8%87%AA%E5%8A%A8%E6%8B%89%E5%8F%96%E6%95%B0%E6%8D%AE%20%2B%20%E6%BB%9A%E5%8A%A8%E9%A2%84%E6%B5%8B%20%2B%20%E6%89%A7%E8%A1%8C%E5%9B%9E%E6%B5%8B%20(%E9%BB%98%E8%AE%A4%E4%BD%BF%E7%94%A8%E7%BA%AF%E8%92%99%E7%89%B9%E5%8D%A1%E6%B4%9B)%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%0A%0A%23%202.%20%E7%A1%AC%E4%BB%B6%E5%8A%A0%E9%80%9F%EF%BC%9A%E9%92%88%E5%AF%B9%20Mac%20%E8%8B%B9%E6%9E%9C%E8%8A%AF%E7%89%87%E5%90%AF%E7%94%A8%20MPS%20%E9%87%91%E5%B1%9E%E5%8A%A0%E9%80%9F%E6%8E%A8%E6%BC%94%20(%E6%88%96%E6%8C%87%E5%AE%9A%20cuda%20%2F%20cpu)%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%20--device%20mps%0A%0A%23%203.%20%E5%90%AF%E7%94%A8%E7%B2%92%E5%AD%90%E6%BB%A4%E6%B3%A2%20(%E7%8E%A9%E6%B3%95B%EF%BC%9A%E5%8A%A8%E6%80%81%E9%87%8D%E5%88%86%E9%85%8D%E6%9D%83%E9%87%8D%20%2B%20%E4%B8%8D%E7%A1%AE%E5%AE%9A%E6%80%A7%E8%B0%83%E6%8E%A7%20%2B%20%E9%AA%8C%E8%AF%81%E7%AA%97%E5%8F%A3%203%20%E5%A4%A9)%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20600036%20--auto%20--particle-filter%20--pf-window%203%20--pf-threshold%200.35%0A%0A%23%204.%20%E6%B8%AF%E8%82%A1%E4%B8%8E%E7%BE%8E%E8%82%A1%E6%A0%87%E7%9A%84%E5%9B%9E%E6%B5%8B%EF%BC%88%E8%87%AA%E5%8A%A8%E5%8C%B9%E9%85%8D%E5%B8%82%E5%9C%BA%E8%A7%84%E5%88%99%E4%B8%8E%E4%B8%80%E6%89%8B%E4%BF%9D%E5%BA%95%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%2000700%20--auto%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20AAPL%20--auto%0A%0A%23%205.%20%E8%87%AA%E5%AE%9A%E4%B9%89%E9%A3%8E%E6%8E%A7%E5%8F%82%E6%95%B0%EF%BC%9A%E7%A1%AC%E6%AD%A2%E6%8D%9F%205%25%EF%BC%8C%E7%A7%BB%E5%8A%A8%E6%AD%A2%E7%9B%88%203%25%EF%BC%8C%E6%9C%80%E5%A4%A7%E6%8C%81%E4%BB%93%208%20%E5%A4%A9%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--hard-stop%200.05%20--trail-stop%200.03%20--max-hold%208%0A%0A%23%206.%20%E5%BC%80%E5%90%AF%E6%8A%80%E8%83%BD%E5%87%86%E5%85%A5%E5%BC%BA%E6%8B%A6%E6%88%AA%EF%BC%88%E4%BD%93%E6%A3%80%E4%B8%8D%E5%90%88%E6%A0%BC%E7%9B%B4%E6%8E%A5%E6%8A%A5%E9%94%99%E4%B8%AD%E6%AD%A2%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%20--require-skill%0A%0A%23%207.%20%E6%B3%A2%E5%8A%A8%E7%8E%87%E8%87%AA%E9%80%82%E5%BA%94%E7%AA%97%E5%8F%A3%E9%85%8D%E7%BD%AE%EF%BC%88%E9%AB%98%E6%B3%A2%E4%B8%8B%E9%99%90%E8%AE%BE%E4%B8%BA25%E5%A4%A9%EF%BC%8C%E6%88%96%E5%85%B3%E9%97%AD%E8%87%AA%E9%80%82%E5%BA%94%E5%9B%9E%E5%BD%92%E5%9B%BA%E5%AE%9A60%E5%A4%A9%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20TSLA%20--auto%20--calib-window-min%2025%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20TSLA%20--auto%20--no-dynamic-calib%0A%0A%23%208.%20%E6%97%A5%E5%BF%97%E6%B2%BB%E7%90%86%E4%B8%8E%E5%8E%86%E5%8F%B2%E6%B8%85%E7%90%86%0A%23%20%E6%B8%85%E7%90%86%E6%8C%87%E5%AE%9A%E6%A0%87%E7%9A%84%E5%8E%86%E5%8F%B2%E5%9B%9E%E6%B5%8B%E6%97%A5%E5%BF%97%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--clear-log%0A%23%20%E4%B8%80%E9%94%AE%E6%B8%85%E7%90%86%20output%20%E7%9B%AE%E5%BD%95%E4%B8%8B%E6%89%80%E6%9C%89%E6%97%A5%E5%BF%97%E6%96%87%E4%BB%B6%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20--clear-all-logs%0A%23%20%E9%9D%99%E9%BB%98%E8%BF%90%E8%A1%8C%EF%BC%88%E5%85%B3%E9%97%AD%E6%9C%AC%E5%9C%B0%20.log%20%E6%96%87%E4%BB%B6%E8%90%BD%E7%9B%98%EF%BC%8C%E4%BB%85%E7%BB%88%E7%AB%AF%E6%8E%A7%E5%88%B6%E5%8F%B0%E6%89%93%E5%8D%B0%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%20--no-log%0A%0A%23%209.%20%E8%82%A1%E7%A5%A8%E6%B1%A0%E6%89%B9%E9%87%8F%E8%87%AA%E5%8A%A8%E5%8C%96%E5%9B%9E%E6%B5%8B%E8%B0%83%E5%BA%A6%0Apython%20backtest%2Frun_backtest_batch.py%20--auto%20--stock-file%20backtest%2Fmy_stocks.csv%0A%0A%23%2010.%20%E5%A4%9A%E5%91%A8%E6%9C%9F%20(15m%2F30m%2F1d)%20%E4%B8%8E%E8%87%AA%E5%AE%9A%E4%B9%89%E9%87%8F%E5%8C%96%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B5%8B%0Apython%20backtest%2Frun_custom_strategy.py%20AAPL%20--market%20US%20--timeframe%201d%0Apython%20backtest%2Frun_custom_strategy.py%20TSLA%20--market%20US%20--timeframe%2015m">
+<div class="code-card" data-raw="%23%201.%20%E6%8E%A8%E8%8D%90%EF%BC%9A%E4%B8%80%E9%94%AE%E8%87%AA%E5%8A%A8%E6%8B%89%E5%8F%96%E6%95%B0%E6%8D%AE%20%2B%20%E6%BB%9A%E5%8A%A8%E9%A2%84%E6%B5%8B%20%2B%20%E6%89%A7%E8%A1%8C%E5%9B%9E%E6%B5%8B%20(%E9%BB%98%E8%AE%A4%E4%BD%BF%E7%94%A8%E7%BA%AF%E8%92%99%E7%89%B9%E5%8D%A1%E6%B4%9B)%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%0A%0A%23%202.%20%E7%A1%AC%E4%BB%B6%E5%8A%A0%E9%80%9F%EF%BC%9A%E9%92%88%E5%AF%B9%20Mac%20%E8%8B%B9%E6%9E%9C%E8%8A%AF%E7%89%87%E5%90%AF%E7%94%A8%20MPS%20%E9%87%91%E5%B1%9E%E5%8A%A0%E9%80%9F%E6%8E%A8%E6%BC%94%20(%E6%88%96%E6%8C%87%E5%AE%9A%20cuda%20%2F%20cpu)%0A%23%20%E6%B3%A8%EF%BC%9AMac%20Apple%20Silicon%20%E7%BB%9F%E4%B8%80%E5%86%85%E5%AD%98%E6%9E%B6%E6%9E%84%E4%B8%8B%EF%BC%8C%E7%B3%BB%E7%BB%9F%E5%BA%95%E5%B1%82%E5%B7%B2%E5%86%85%E5%BB%BA%20_INFERENCE_LOCK%20%E7%BA%BF%E7%A8%8B%E5%AE%89%E5%85%A8%E9%94%81%EF%BC%8C%0A%23%20%E5%A4%9A%E6%A0%87%E7%9A%84%E6%89%B9%E9%87%8F%E5%9B%9E%E6%B5%8B%E6%97%B6%20GPU%20%E6%8E%A8%E7%90%86%E8%87%AA%E5%8A%A8%E6%8E%92%E9%98%9F%E4%BA%92%E6%96%A5%EF%BC%8C%E5%9B%9E%E6%B5%8B%E6%92%AE%E5%90%88%E5%B9%B6%E5%8F%91%E5%8A%A0%E9%80%9F%EF%BC%8C%E6%9D%9C%E7%BB%9D%20Metal%20%E9%A9%B1%E5%8A%A8%E5%86%B2%E7%AA%81%E3%80%82%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%20--device%20mps%0A%0A%23%203.%20%E5%90%AF%E7%94%A8%E7%B2%92%E5%AD%90%E6%BB%A4%E6%B3%A2%20(%E7%8E%A9%E6%B3%95B%EF%BC%9A%E5%8A%A8%E6%80%81%E9%87%8D%E5%88%86%E9%85%8D%E6%9D%83%E9%87%8D%20%2B%20%E4%B8%8D%E7%A1%AE%E5%AE%9A%E6%80%A7%E8%B0%83%E6%8E%A7%20%2B%20%E9%AA%8C%E8%AF%81%E7%AA%97%E5%8F%A3%203%20%E5%A4%A9)%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20600036%20--auto%20--particle-filter%20--pf-window%203%20--pf-threshold%200.35%0A%0A%23%204.%20%E6%B8%AF%E8%82%A1%E4%B8%8E%E7%BE%8E%E8%82%A1%E6%A0%87%E7%9A%84%E5%9B%9E%E6%B5%8B%EF%BC%88%E8%87%AA%E5%8A%A8%E5%8C%B9%E9%85%8D%E5%B8%82%E5%9C%BA%E8%A7%84%E5%88%99%E4%B8%8E%E4%B8%80%E6%89%8B%E4%BF%9D%E5%BA%95%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%2000700%20--auto%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20AAPL%20--auto%0A%0A%23%205.%20%E8%87%AA%E5%AE%9A%E4%B9%89%E9%A3%8E%E6%8E%A7%E5%8F%82%E6%95%B0%EF%BC%9A%E7%A1%AC%E6%AD%A2%E6%8D%9F%205%25%EF%BC%8C%E7%A7%BB%E5%8A%A8%E6%AD%A2%E7%9B%88%203%25%EF%BC%8C%E6%9C%80%E5%A4%A7%E6%8C%81%E4%BB%93%208%20%E5%A4%A9%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--hard-stop%200.05%20--trail-stop%200.03%20--max-hold%208%0A%0A%23%206.%20%E5%BC%80%E5%90%AF%E6%8A%80%E8%83%BD%E5%87%86%E5%85%A5%E5%BC%BA%E6%8B%A6%E6%88%AA%EF%BC%88%E4%BD%93%E6%A3%80%E4%B8%8D%E5%90%88%E6%A0%BC%E7%9B%B4%E6%8E%A5%E6%8A%A5%E9%94%99%E4%B8%AD%E6%AD%A2%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%20--require-skill%0A%0A%23%207.%20%E6%B3%A2%E5%8A%A8%E7%8E%87%E8%87%AA%E9%80%82%E5%BA%94%E7%AA%97%E5%8F%A3%E9%85%8D%E7%BD%AE%EF%BC%88%E9%AB%98%E6%B3%A2%E4%B8%8B%E9%99%90%E8%AE%BE%E4%B8%BA25%E5%A4%A9%EF%BC%8C%E6%88%96%E5%85%B3%E9%97%AD%E8%87%AA%E9%80%82%E5%BA%94%E5%9B%9E%E5%BD%92%E5%9B%BA%E5%AE%9A60%E5%A4%A9%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20TSLA%20--auto%20--calib-window-min%2025%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20TSLA%20--auto%20--no-dynamic-calib%0A%0A%23%208.%20%E6%97%A5%E5%BF%97%E6%B2%BB%E7%90%86%E4%B8%8E%E5%8E%86%E5%8F%B2%E6%B8%85%E7%90%86%0A%23%20%E6%B8%85%E7%90%86%E6%8C%87%E5%AE%9A%E6%A0%87%E7%9A%84%E5%8E%86%E5%8F%B2%E5%9B%9E%E6%B5%8B%E6%97%A5%E5%BF%97%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--clear-log%0A%23%20%E4%B8%80%E9%94%AE%E6%B8%85%E7%90%86%20output%20%E7%9B%AE%E5%BD%95%E4%B8%8B%E6%89%80%E6%9C%89%E6%97%A5%E5%BF%97%E6%96%87%E4%BB%B6%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20--clear-all-logs%0A%23%20%E9%9D%99%E9%BB%98%E8%BF%90%E8%A1%8C%EF%BC%88%E5%85%B3%E9%97%AD%E6%9C%AC%E5%9C%B0%20.log%20%E6%96%87%E4%BB%B6%E8%90%BD%E7%9B%98%EF%BC%8C%E4%BB%85%E7%BB%88%E7%AB%AF%E6%8E%A7%E5%88%B6%E5%8F%B0%E6%89%93%E5%8D%B0%EF%BC%89%0Apython%20backtest%2Frun_backtest_kronos_pro.py%20300418%20--auto%20--no-log%0A%0A%23%209.%20%E8%82%A1%E7%A5%A8%E6%B1%A0%E6%89%B9%E9%87%8F%E8%87%AA%E5%8A%A8%E5%8C%96%E5%9B%9E%E6%B5%8B%E8%B0%83%E5%BA%A6%0A%23%20%E6%8E%A8%E8%8D%90%E4%B8%B2%E8%A1%8C%E8%B0%83%E5%BA%A6%EF%BC%88Mac%20Apple%20Silicon%20%E7%BB%9F%E4%B8%80%E5%86%85%E5%AD%98%E4%B8%8B%E7%A8%B3%E5%AE%9A%E6%80%A7%E4%B8%8E%E5%90%9E%E5%90%90%E9%87%8F%E6%9C%80%E9%AB%98%EF%BC%89%0Apython%20backtest%2Frun_backtest_batch.py%20--auto%20--stock-file%20backtest%2Fmy_stocks.csv%0A%23%20%E5%90%AF%E7%94%A8%E5%A4%9A%E7%BA%BF%E7%A8%8B%E5%B9%B6%E5%8F%91%E5%9B%9E%E6%B5%8B%EF%BC%88%E5%BA%95%E5%B1%82%E5%86%85%E7%BD%AE%20GPU%20%E6%8E%A8%E7%90%86%E4%BA%92%E6%96%A5%E9%94%81%E4%BF%9D%E6%8A%A4%EF%BC%8C%E5%9B%9E%E6%B5%8B%E6%92%AE%E5%90%88%E4%B8%8E%E5%88%86%E6%9E%90%E5%B9%B6%E5%8F%91%E5%8A%A0%E9%80%9F%EF%BC%89%0Apython%20backtest%2Frun_backtest_batch.py%20--auto%20--stock-file%20backtest%2Fmy_stocks.csv%20--parallel-stocks%202%20--max-workers%206%0A%0A%23%2010.%20%E5%A4%9A%E5%91%A8%E6%9C%9F%20(15m%2F30m%2F1d)%20%E4%B8%8E%E8%87%AA%E5%AE%9A%E4%B9%89%E9%87%8F%E5%8C%96%E7%AD%96%E7%95%A5%E5%9B%9E%E6%B5%8B%0Apython%20backtest%2Frun_custom_strategy.py%20AAPL%20--market%20US%20--timeframe%201d%0Apython%20backtest%2Frun_custom_strategy.py%20TSLA%20--market%20US%20--timeframe%2015m">
   <div class="code-header">
     <div class="code-dots">
       <span class="dot dot-red"></span>
@@ -5893,7 +5901,7 @@
     </div>
     <div class="code-meta-wrap">
       <span class="code-lang-badge lang-bash">BASH</span>
-      <span class="code-line-count">37 行代码</span>
+      <span class="code-line-count">42 行代码</span>
     </div>
     <button class="copy-code-btn" onclick="copyCodeBlock(this)">
       <svg class="copy-icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -5905,39 +5913,44 @@
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span></span></div>
 <div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"> </span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"><span class="hljs-comment"># 2. 硬件加速：针对 Mac 苹果芯片启用 MPS 金属加速推演 (或指定 cuda / cpu)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--device</span> mps</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"><span class="hljs-comment"># 3. 启用粒子滤波 (玩法B：动态重分配权重 + 不确定性调控 + 验证窗口 3 天)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">600036</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--particle-filter</span> <span class="cmd-flag">--pf-window</span> 3 <span class="cmd-flag">--pf-threshold</span> 0.35</span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"><span class="hljs-comment"># 4. 港股与美股标的回测（自动匹配市场规则与一手保底）</span></span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">00700</span> <span class="cmd-flag">--auto</span></span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">AAPL</span> <span class="cmd-flag">--auto</span></span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text"><span class="hljs-comment"># 5. 自定义风控参数：硬止损 5%，移动止盈 3%，最大持仓 8 天</span></span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--hard-stop</span> 0.05 <span class="cmd-flag">--trail-stop</span> 0.03 <span class="cmd-flag">--max-hold</span> 8</span></div>
-<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text"><span class="hljs-comment"># 6. 开启技能准入强拦截（体检不合格直接报错中止）</span></span></div>
-<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--require-skill</span></span></div>
-<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text"><span class="hljs-comment"># 7. 波动率自适应窗口配置（高波下限设为25天，或关闭自适应回归固定60天）</span></span></div>
-<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">TSLA</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--calib-window-min</span> 25</span></div>
-<div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">TSLA</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--no-dynamic-calib</span></span></div>
-<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text"><span class="hljs-comment"># 8. 日志治理与历史清理</span></span></div>
-<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text"><span class="hljs-comment"># 清理指定标的历史回测日志</span></span></div>
-<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--clear-log</span></span></div>
-<div class="code-line"><span class="line-num" data-line="27">27</span><span class="line-text"><span class="hljs-comment"># 一键清理 output 目录下所有日志文件</span></span></div>
-<div class="code-line"><span class="line-num" data-line="28">28</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-flag">--clear-all-logs</span></span></div>
-<div class="code-line"><span class="line-num" data-line="29">29</span><span class="line-text"><span class="hljs-comment"># 静默运行（关闭本地 .log 文件落盘，仅终端控制台打印）</span></span></div>
-<div class="code-line"><span class="line-num" data-line="30">30</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--no-log</span></span></div>
-<div class="code-line"><span class="line-num" data-line="31">31</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="32">32</span><span class="line-text"><span class="hljs-comment"># 9. 股票池批量自动化回测调度</span></span></div>
-<div class="code-line"><span class="line-num" data-line="33">33</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_batch.py</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--stock-file</span> <span class="cmd-path">backtest/my_stocks.csv</span></span></div>
-<div class="code-line"><span class="line-num" data-line="34">34</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="35">35</span><span class="line-text"><span class="hljs-comment"># 10. 多周期 (15m/30m/1d) 与自定义量化策略回测</span></span></div>
-<div class="code-line"><span class="line-num" data-line="36">36</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_custom_strategy.py</span> <span class="cmd-arg">AAPL</span> <span class="cmd-flag">--market</span> US <span class="cmd-flag">--timeframe</span> 1d</span></div>
-<div class="code-line"><span class="line-num" data-line="37">37</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_custom_strategy.py</span> <span class="cmd-arg">TSLA</span> <span class="cmd-flag">--market</span> US <span class="cmd-flag">--timeframe</span> 15m</span></div></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text"><span class="hljs-comment"># 注：Mac Apple Silicon 统一内存架构下，系统底层已内建 _INFERENCE_LOCK 线程安全锁，</span></span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text"><span class="hljs-comment"># 多标的批量回测时 GPU 推理自动排队互斥，回测撮合并发加速，杜绝 Metal 驱动冲突。</span></span></div>
+<div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--device</span> mps</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text"><span class="hljs-comment"># 3. 启用粒子滤波 (玩法B：动态重分配权重 + 不确定性调控 + 验证窗口 3 天)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">600036</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--particle-filter</span> <span class="cmd-flag">--pf-window</span> 3 <span class="cmd-flag">--pf-threshold</span> 0.35</span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text"><span class="hljs-comment"># 4. 港股与美股标的回测（自动匹配市场规则与一手保底）</span></span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">00700</span> <span class="cmd-flag">--auto</span></span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">AAPL</span> <span class="cmd-flag">--auto</span></span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text"><span class="hljs-comment"># 5. 自定义风控参数：硬止损 5%，移动止盈 3%，最大持仓 8 天</span></span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--hard-stop</span> 0.05 <span class="cmd-flag">--trail-stop</span> 0.03 <span class="cmd-flag">--max-hold</span> 8</span></div>
+<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text"><span class="hljs-comment"># 6. 开启技能准入强拦截（体检不合格直接报错中止）</span></span></div>
+<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--require-skill</span></span></div>
+<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text"><span class="hljs-comment"># 7. 波动率自适应窗口配置（高波下限设为25天，或关闭自适应回归固定60天）</span></span></div>
+<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">TSLA</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--calib-window-min</span> 25</span></div>
+<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">TSLA</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--no-dynamic-calib</span></span></div>
+<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text"><span class="hljs-comment"># 8. 日志治理与历史清理</span></span></div>
+<div class="code-line"><span class="line-num" data-line="27">27</span><span class="line-text"><span class="hljs-comment"># 清理指定标的历史回测日志</span></span></div>
+<div class="code-line"><span class="line-num" data-line="28">28</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--clear-log</span></span></div>
+<div class="code-line"><span class="line-num" data-line="29">29</span><span class="line-text"><span class="hljs-comment"># 一键清理 output 目录下所有日志文件</span></span></div>
+<div class="code-line"><span class="line-num" data-line="30">30</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-flag">--clear-all-logs</span></span></div>
+<div class="code-line"><span class="line-num" data-line="31">31</span><span class="line-text"><span class="hljs-comment"># 静默运行（关闭本地 .log 文件落盘，仅终端控制台打印）</span></span></div>
+<div class="code-line"><span class="line-num" data-line="32">32</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_kronos_pro.py</span> <span class="cmd-arg">300418</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--no-log</span></span></div>
+<div class="code-line"><span class="line-num" data-line="33">33</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="34">34</span><span class="line-text"><span class="hljs-comment"># 9. 股票池批量自动化回测调度</span></span></div>
+<div class="code-line"><span class="line-num" data-line="35">35</span><span class="line-text"><span class="hljs-comment"># 推荐串行调度（Mac Apple Silicon 统一内存下稳定性与吞吐量最高）</span></span></div>
+<div class="code-line"><span class="line-num" data-line="36">36</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_batch.py</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--stock-file</span> <span class="cmd-path">backtest/my_stocks.csv</span></span></div>
+<div class="code-line"><span class="line-num" data-line="37">37</span><span class="line-text"><span class="hljs-comment"># 启用多线程并发回测（底层内置 GPU 推理互斥锁保护，回测撮合与分析并发加速）</span></span></div>
+<div class="code-line"><span class="line-num" data-line="38">38</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_backtest_batch.py</span> <span class="cmd-flag">--auto</span> <span class="cmd-flag">--stock-file</span> <span class="cmd-path">backtest/my_stocks.csv</span> <span class="cmd-flag">--parallel-stocks</span> 2 <span class="cmd-flag">--max-workers</span> 6</span></div>
+<div class="code-line"><span class="line-num" data-line="39">39</span><span class="line-text"> </span></div>
+<div class="code-line"><span class="line-num" data-line="40">40</span><span class="line-text"><span class="hljs-comment"># 10. 多周期 (15m/30m/1d) 与自定义量化策略回测</span></span></div>
+<div class="code-line"><span class="line-num" data-line="41">41</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_custom_strategy.py</span> <span class="cmd-arg">AAPL</span> <span class="cmd-flag">--market</span> US <span class="cmd-flag">--timeframe</span> 1d</span></div>
+<div class="code-line"><span class="line-num" data-line="42">42</span><span class="line-text"><span class="cmd-name">python</span> <span class="cmd-path">backtest/run_custom_strategy.py</span> <span class="cmd-arg">TSLA</span> <span class="cmd-flag">--market</span> US <span class="cmd-flag">--timeframe</span> 15m</span></div></div>
   </div>
 </div>
 <h3 id="section-10-3" class="doc-heading doc-heading-3">
@@ -6002,7 +6015,7 @@
   </h2>
 <h3 id="section-11-1" class="doc-heading doc-heading-3">
     <span class="heading-anchor" onclick="copyHeadingLink('section-11-1')" title="点击复制直达链接">#</span>
-    <span class="heading-text">11.1 38 项策略核心控制参数端到端流向总表</span>
+    <span class="heading-text">11.1 40 项策略核心控制参数端到端流向总表</span>
   </h3>
 
 <div class="table-card" id="table-19">
@@ -6060,8 +6073,8 @@
 <td align="left">Stage 0 环境初始化</td>
 <td align="left">送入 Kronos 模型的上下文窗口长度</td>
 <td align="left">影响特征提取覆盖度与显存消耗</td>
-<td align="left"><code>120</code></td>
-<td align="left">对应约半年行情，保留完整中期形态</td>
+<td align="left"><code>90</code></td>
+<td align="left">对应约一个季度行情，契合 Kronos 预训练分布先验</td>
 </tr>
 <tr>
 <td align="left">4</td>
@@ -6447,6 +6460,28 @@
 <td align="left">仅在收盘后核算浮亏并顺延至次日开盘挂单平仓</td>
 <td align="left"><code>False (默认开启)</code></td>
 <td align="left">模拟只看日线收盘的慢速决策系统时使用</td>
+</tr>
+<tr>
+<td align="left">39</td>
+<td align="left">批量回测并发标的数</td>
+<td align="left"><code>--parallel-stocks</code></td>
+<td align="left"><code>args.parallel_stocks</code></td>
+<td align="left">批量调度 (run_backtest_batch)</td>
+<td align="left">控制多标的批量回测的并发标的数</td>
+<td align="left">设为 &gt;1 时启动多线程回测；底层已内建 GPU 推理互斥锁保护，回测撮合并发加速</td>
+<td align="left"><code>1 (串行)</code></td>
+<td align="left">Mac Apple Silicon (MPS) 建议保持 1 串行推演，避免显存争用并获最佳吞吐量</td>
+</tr>
+<tr>
+<td align="left">40</td>
+<td align="left">行情并发拉取线程数</td>
+<td align="left"><code>--max-workers</code></td>
+<td align="left"><code>args.max_workers</code></td>
+<td align="left">批量调度 (run_backtest_batch)</td>
+<td align="left">多源行情网络下载并发线程数</td>
+<td align="left">加速批量股票池历史 K 线的网络并发拉取与本地缓存落盘</td>
+<td align="left"><code>6</code></td>
+<td align="left">网络 I/O 密集型操作，推荐设为 4 ~ 8</td>
 </tr>
 </tbody></table>
   </div>
@@ -6900,28 +6935,28 @@
     <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">【用户交互层】</span></div>
 <div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">             ┌───────────────────────────┴───────────────────────────┐</span></div>
 <div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">             ▼                                                       ▼</span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">  Streamlit 交互式量化中枢 <span class="hljs-punctuation">(</span>WebUI<span class="hljs-punctuation">)</span>                         CLI 命令行生产终端</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">  Streamlit 交互式量化中枢 (WebUI)                         CLI 命令行生产终端</span></div>
 <div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">             │                                                       │</span></div>
 <div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">             └───────────────────────────┬───────────────────────────┘</span></div>
 <div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">                                         ▼</span></div>
 <div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">                 【统一调度门面 run_backtest_kronos_pro.py】</span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">    <span class="hljs-punctuation">(</span>对外暴露与 V1 完全兼容的 API：KronosBacktesterPro / KronosDataFetcher / get_available_stocks<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">    (对外暴露与 V1 完全兼容的 API：KronosBacktesterPro / KronosDataFetcher / get_available_stocks)</span></div>
 <div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">                                         │</span></div>
 <div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">     ┌───────────────────┬───────────────┴───────────────┬───────────────────┐</span></div>
 <div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">     ▼                   ▼                               ▼                   ▼</span></div>
 <div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">【核心基础设施 core】  【数据服务层 data】            【策略工程层 strategies】  【执行与撮合 execution】</span></div>
-<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text"> • 领域模型 <span class="hljs-punctuation">(</span>types<span class="hljs-punctuation">)</span>     • 行情获取 <span class="hljs-punctuation">(</span>data_fetcher<span class="hljs-punctuation">)</span>       • 策略基类 <span class="hljs-punctuation">(</span>BaseStrategy<span class="hljs-punctuation">)</span> • 经纪商基类 <span class="hljs-punctuation">(</span>BaseBroker<span class="hljs-punctuation">)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text"> • 市场画像 <span class="hljs-punctuation">(</span>rules<span class="hljs-punctuation">)</span>     • AI 滚动推演 <span class="hljs-punctuation">(</span>kronos_predictor<span class="hljs-punctuation">)</span> • Kronos AI 策略          • 仿真撮合 <span class="hljs-punctuation">(</span>SimulatedBroker<span class="hljs-punctuation">)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text"> • 时间粒度 <span class="hljs-punctuation">(</span>timeframes<span class="hljs-punctuation">)</span>• 缓存指纹防污染 <span class="hljs-punctuation">(</span>cache<span class="hljs-punctuation">)</span>        • 日内突破突破范例          • 仓位预算 <span class="hljs-punctuation">(</span>RiskBudgetSizer<span class="hljs-punctuation">)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text"> • 独立日志 <span class="hljs-punctuation">(</span>logger<span class="hljs-punctuation">)</span>                                    • 绝对信噪比门槛          • 出场防守 <span class="hljs-punctuation">(</span>ExitStateMachine<span class="hljs-punctuation">)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">                                                                             • 实盘网关 <span class="hljs-punctuation">(</span>Futu / IBKR<span class="hljs-punctuation">)</span></span></div>
+<div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text"> • 领域模型 (types)     • 行情获取 (data_fetcher)       • 策略基类 (BaseStrategy) • 经纪商基类 (BaseBroker)</span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text"> • 市场画像 (rules)     • AI 滚动推演 (kronos_predictor) • Kronos AI 策略          • 仿真撮合 (SimulatedBroker)</span></div>
+<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text"> • 时间粒度 (timeframes)• 缓存指纹防污染 (cache)        • 日内突破突破范例          • 仓位预算 (RiskBudgetSizer)</span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text"> • 独立日志 (logger)                                    • 绝对信噪比门槛          • 出场防守 (ExitStateMachine)</span></div>
+<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">                                                                             • 实盘网关 (Futu / IBKR)</span></div>
 <div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text">     │                   │                               │                   │</span></div>
 <div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">     └───────────────────┼───────────────────────────────┼───────────────────┘</span></div>
 <div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">                         ▼                               ▼</span></div>
 <div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text">                 【回测与计算引擎 engine】            【专业可视化层 visualizer】</span></div>
-<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">                  • 回测循环 <span class="hljs-punctuation">(</span>BacktestEngine<span class="hljs-punctuation">)</span>          • Matplotlib <span class="hljs-number">4</span>联报告 <span class="hljs-punctuation">(</span>StaticVisualizer<span class="hljs-punctuation">)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">                  • 量化归因评价 <span class="hljs-punctuation">(</span>MetricsEvaluator<span class="hljs-punctuation">)</span>    • Plotly <span class="hljs-number">4</span>轴交互联动 <span class="hljs-punctuation">(</span>InteractiveVisualizer<span class="hljs-punctuation">)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">                  • AI预测前置体检 <span class="hljs-punctuation">(</span>SkillEvaluator<span class="hljs-punctuation">)</span>   • 贯通十字光标标尺 <span class="hljs-punctuation">(</span>crosshair<span class="hljs-punctuation">)</span></span></div></div>
+<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">                  • 回测循环 (BacktestEngine)          • Matplotlib 4联报告 (StaticVisualizer)</span></div>
+<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">                  • 量化归因评价 (MetricsEvaluator)    • Plotly 4轴交互联动 (InteractiveVisualizer)</span></div>
+<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">                  • AI预测前置体检 (SkillEvaluator)   • 贯通十字光标标尺 (crosshair)</span></div></div>
   </div>
 </div>
 <p>重构后，<code>run_backtest_kronos_pro.py</code> 代码体积缩减 <strong>80%</strong>，全部原有命令与 API <strong>100% 保持完全兼容</strong>。</p>
@@ -7083,32 +7118,32 @@ V2.0 统一采用严格的物理换算公式：</p>
     </button>
   </div>
   <div class="code-viewport">
-    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text"><span class="hljs-keyword">from</span> backtest.strategies <span class="hljs-keyword">import</span> BaseStrategy</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text"><span class="hljs-keyword">from</span> backtest.core <span class="hljs-keyword">import</span> TimeFrame, MarketProfile</span></div>
-<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text"><span class="hljs-keyword">import</span> pandas <span class="hljs-keyword">as</span> pd</span></div>
+    <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">from backtest.strategies import BaseStrategy</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">from backtest.core import TimeFrame, MarketProfile</span></div>
+<div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">import pandas as pd</span></div>
 <div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text"><span class="hljs-keyword">class</span> <span class="hljs-title class_">CustomMomentumStrategy</span>(<span class="hljs-title class_ inherited__">BaseStrategy</span>):</span></div>
-<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    <span class="hljs-string">&quot;&quot;&quot;用户自定义动量策略示例&quot;&quot;&quot;</span></span></div>
+<div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">class CustomMomentumStrategy(BaseStrategy):</span></div>
+<div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">    """用户自定义动量策略示例"""</span></div>
 <div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    <span class="hljs-keyword">def</span> <span class="hljs-title function_">__init__</span>(<span class="hljs-params">self, fast_p=<span class="hljs-number">10</span>, slow_p=<span class="hljs-number">30</span></span>):</span></div>
-<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">        <span class="hljs-built_in">super</span>().__init__(name=<span class="hljs-string">&quot;CustomMomentum&quot;</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">        <span class="hljs-variable language_">self</span>.fast_p = fast_p</span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">        <span class="hljs-variable language_">self</span>.slow_p = slow_p</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">    def __init__(self, fast_p=10, slow_p=30):</span></div>
+<div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">        super().__init__(name="CustomMomentum")</span></div>
+<div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">        self.fast_p = fast_p</span></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">        self.slow_p = slow_p</span></div>
 <div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">    <span class="hljs-keyword">def</span> <span class="hljs-title function_">generate_signals</span>(<span class="hljs-params">self, hist_df: pd.DataFrame, pred_df=<span class="hljs-literal">None</span>, **kwargs</span>) -&gt; pd.DataFrame:</span></div>
+<div class="code-line"><span class="line-num" data-line="13">13</span><span class="line-text">    def generate_signals(self, hist_df: pd.DataFrame, pred_df=None, **kwargs) -&gt; pd.DataFrame:</span></div>
 <div class="code-line"><span class="line-num" data-line="14">14</span><span class="line-text">        df = hist_df.copy()</span></div>
-<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">        <span class="hljs-comment"># 1. 严格防偷价计算指标 (shift 1)</span></span></div>
-<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">        df[<span class="hljs-string">&#x27;fast_ma&#x27;</span>] = df[<span class="hljs-string">&#x27;close&#x27;</span>].rolling(<span class="hljs-variable language_">self</span>.fast_p).mean().shift(<span class="hljs-number">1</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">        df[<span class="hljs-string">&#x27;slow_ma&#x27;</span>] = df[<span class="hljs-string">&#x27;close&#x27;</span>].rolling(<span class="hljs-variable language_">self</span>.slow_p).mean().shift(<span class="hljs-number">1</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">        df[<span class="hljs-string">&#x27;close_prev&#x27;</span>] = df[<span class="hljs-string">&#x27;close&#x27;</span>].shift(<span class="hljs-number">1</span>)</span></div>
+<div class="code-line"><span class="line-num" data-line="15">15</span><span class="line-text">        # 1. 严格防偷价计算指标 (shift 1)</span></div>
+<div class="code-line"><span class="line-num" data-line="16">16</span><span class="line-text">        df['fast_ma'] = df['close'].rolling(self.fast_p).mean().shift(1)</span></div>
+<div class="code-line"><span class="line-num" data-line="17">17</span><span class="line-text">        df['slow_ma'] = df['close'].rolling(self.slow_p).mean().shift(1)</span></div>
+<div class="code-line"><span class="line-num" data-line="18">18</span><span class="line-text">        df['close_prev'] = df['close'].shift(1)</span></div>
 <div class="code-line"><span class="line-num" data-line="19">19</span><span class="line-text"> </span></div>
-<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">        <span class="hljs-comment"># 2. 生成买入与离场决策</span></span></div>
-<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">        df[<span class="hljs-string">&#x27;exec_signal&#x27;</span>] = (df[<span class="hljs-string">&#x27;fast_ma&#x27;</span>] &gt; df[<span class="hljs-string">&#x27;slow_ma&#x27;</span>]).astype(<span class="hljs-built_in">int</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text">        df[<span class="hljs-string">&#x27;exec_bearish&#x27;</span>] = (df[<span class="hljs-string">&#x27;fast_ma&#x27;</span>] &lt; df[<span class="hljs-string">&#x27;slow_ma&#x27;</span>]).astype(<span class="hljs-built_in">int</span>)</span></div>
-<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">        df[<span class="hljs-string">&#x27;exec_position_scale&#x27;</span>] = <span class="hljs-number">1.0</span></span></div>
-<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">        df[<span class="hljs-string">&#x27;exec_target_horizon&#x27;</span>] = <span class="hljs-number">8</span>   <span class="hljs-comment"># 目标持仓 8 根 Bar</span></span></div>
-<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">        df[<span class="hljs-string">&#x27;veto_reason&#x27;</span>] = <span class="hljs-string">&quot;&quot;</span></span></div>
-<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text">        <span class="hljs-keyword">return</span> df.dropna()</span></div></div>
+<div class="code-line"><span class="line-num" data-line="20">20</span><span class="line-text">        # 2. 生成买入与离场决策</span></div>
+<div class="code-line"><span class="line-num" data-line="21">21</span><span class="line-text">        df['exec_signal'] = (df['fast_ma'] &gt; df['slow_ma']).astype(int)</span></div>
+<div class="code-line"><span class="line-num" data-line="22">22</span><span class="line-text">        df['exec_bearish'] = (df['fast_ma'] &lt; df['slow_ma']).astype(int)</span></div>
+<div class="code-line"><span class="line-num" data-line="23">23</span><span class="line-text">        df['exec_position_scale'] = 1.0</span></div>
+<div class="code-line"><span class="line-num" data-line="24">24</span><span class="line-text">        df['exec_target_horizon'] = 8   # 目标持仓 8 根 Bar</span></div>
+<div class="code-line"><span class="line-num" data-line="25">25</span><span class="line-text">        df['veto_reason'] = ""</span></div>
+<div class="code-line"><span class="line-num" data-line="26">26</span><span class="line-text">        return df.dropna()</span></div></div>
   </div>
 </div>
 <p>已实现的策略：</p>
@@ -7141,17 +7176,17 @@ V2.0 统一采用严格的物理换算公式：</p>
   </div>
   <div class="code-viewport">
     <div class="code-lines"><div class="code-line"><span class="line-num" data-line="1">1</span><span class="line-text">【策略信号生成与出场状态机】</span></div>
-<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                               │ (下发标准 <span class="hljs-title class_">Order</span>: BUY/SELL/LIMIT/STOP)</span></div>
+<div class="code-line"><span class="line-num" data-line="2">2</span><span class="line-text">                               │ (下发标准 Order: BUY/SELL/LIMIT/STOP)</span></div>
 <div class="code-line"><span class="line-num" data-line="3">3</span><span class="line-text">                               ▼</span></div>
-<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">                    【统一经纪商接口 <span class="hljs-title class_">BaseBroker</span>】</span></div>
+<div class="code-line"><span class="line-num" data-line="4">4</span><span class="line-text">                    【统一经纪商接口 BaseBroker】</span></div>
 <div class="code-line"><span class="line-num" data-line="5">5</span><span class="line-text">                               │</span></div>
 <div class="code-line"><span class="line-num" data-line="6">6</span><span class="line-text">               ┌───────────────┴───────────────┐</span></div>
 <div class="code-line"><span class="line-num" data-line="7">7</span><span class="line-text">               ▼                               ▼</span></div>
-<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">     【回测模式 <span class="hljs-title class_">SimulatedBroker</span>】    【实盘模式 <span class="hljs-title class_">LiveBrokerAdapter</span>】</span></div>
+<div class="code-line"><span class="line-num" data-line="8">8</span><span class="line-text">     【回测模式 SimulatedBroker】    【实盘模式 LiveBrokerAdapter】</span></div>
 <div class="code-line"><span class="line-num" data-line="9">9</span><span class="line-text">      • 模拟滑点与交易所摩擦税费       ┌───────────────┴───────────────┐</span></div>
 <div class="code-line"><span class="line-num" data-line="10">10</span><span class="line-text">      • 涨跌停封死判定与指令顺延       ▼                               ▼</span></div>
-<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">      • 逐日/逐<span class="hljs-title class_">Bar</span>盯市净值计算   富途网关 <span class="hljs-title class_">FutuBrokerAdapter</span>   盈透网关 <span class="hljs-title class_">InteractiveBrokersAdapter</span></span></div>
-<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">                                (<span class="hljs-title class_">Futu</span> <span class="hljs-title class_">OpenD</span> / 港美股)         (IBKR TWS / 全球股票期权)</span></div></div>
+<div class="code-line"><span class="line-num" data-line="11">11</span><span class="line-text">      • 逐日/逐Bar盯市净值计算   富途网关 FutuBrokerAdapter   盈透网关 InteractiveBrokersAdapter</span></div>
+<div class="code-line"><span class="line-num" data-line="12">12</span><span class="line-text">                                (Futu OpenD / 港美股)         (IBKR TWS / 全球股票期权)</span></div></div>
   </div>
 </div>
 <h4 id="heading-91" class="doc-heading doc-heading-4">

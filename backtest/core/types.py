@@ -42,6 +42,34 @@ class TimeFrame(str, Enum):
     def is_intraday(self) -> bool:
         return self in (TimeFrame.M1, TimeFrame.M5, TimeFrame.M15, TimeFrame.M30, TimeFrame.H1)
 
+    @property
+    def pandas_freq(self) -> str:
+        """返回适配 Pandas Resample 的标准频率字符串"""
+        mapping = {
+            TimeFrame.M1: "1min",
+            TimeFrame.M5: "5min",
+            TimeFrame.M15: "15min",
+            TimeFrame.M30: "30min",
+            TimeFrame.H1: "60min",
+            TimeFrame.D1: "1D",
+            TimeFrame.W1: "1W",
+        }
+        return mapping.get(self, "1D")
+
+    @property
+    def label(self) -> str:
+        """中文友好名称"""
+        mapping = {
+            TimeFrame.M1: "1分钟",
+            TimeFrame.M5: "5分钟",
+            TimeFrame.M15: "15分钟",
+            TimeFrame.M30: "30分钟",
+            TimeFrame.H1: "60分钟",
+            TimeFrame.D1: "日线",
+            TimeFrame.W1: "周线",
+        }
+        return mapping.get(self, "日线")
+
     def bars_per_day(self, market: str = 'CN') -> int:
         """
         根据交易所交易时段计算每日包含的 Bar 数量：
@@ -78,11 +106,22 @@ class TimeFrame(str, Enum):
     def from_str(cls, val: Union[str, 'TimeFrame']) -> 'TimeFrame':
         if isinstance(val, TimeFrame):
             return val
-        s = str(val).strip().lower()
+        if hasattr(val, 'value'):
+            s = str(val.value).strip().lower()
+        else:
+            s = str(val).strip().lower()
+
+        if s.startswith('timeframe.'):
+            s = s.split('.', 1)[1]
+
         mapping = {
-            '1m': cls.M1, '5m': cls.M5, '15m': cls.M15, '30m': cls.M30,
-            '60m': cls.H1, '1h': cls.H1, 'd': cls.D1, '1d': cls.D1,
-            'day': cls.D1, 'daily': cls.D1, 'w': cls.W1, '1w': cls.W1,
+            '1m': cls.M1, '1min': cls.M1, 'm1': cls.M1, '1分钟': cls.M1,
+            '5m': cls.M5, '5min': cls.M5, 'm5': cls.M5, '5分钟': cls.M5,
+            '15m': cls.M15, '15min': cls.M15, 'm15': cls.M15, '15分钟': cls.M15,
+            '30m': cls.M30, '30min': cls.M30, 'm30': cls.M30, '30分钟': cls.M30,
+            '60m': cls.H1, '60min': cls.H1, '1h': cls.H1, '1hour': cls.H1, 'h1': cls.H1, '60分钟': cls.H1,
+            'd': cls.D1, '1d': cls.D1, 'day': cls.D1, 'daily': cls.D1, '日线': cls.D1,
+            'w': cls.W1, '1w': cls.W1, 'week': cls.W1, 'weekly': cls.W1, '周线': cls.W1,
         }
         return mapping.get(s, cls.D1)
 
@@ -163,7 +202,7 @@ class Order:
 
 @dataclass
 class Position:
-    """持仓对象（跟踪成本、浮盈、峰谷值与持仓周期）"""
+    """持仓对象（跟踪成本、浮盈、峰谷值与双轨持仓周期：自然日与Bar步长）"""
     symbol: str
     shares: int = 0
     avg_entry_price: float = 0.0
@@ -172,22 +211,72 @@ class Position:
     peak_price: float = 0.0
     trough_price: float = 0.0
     holding_bars: int = 0
+    holding_days: int = 0
     entry_bar_idx: Optional[int] = None
     stop_price: Optional[float] = None
     target_horizon: Optional[int] = None
     active_stop_pct: float = 0.04
     active_trail_pct: float = 0.025
+    trailing_active: bool = False
 
     @property
     def is_open(self) -> bool:
         return self.shares > 0
 
-    def update_market_price(self, high: float, low: float, close: float) -> None:
+    def update_market_price(
+        self,
+        high: float,
+        low: float,
+        close: float,
+        current_time: Optional[Any] = None,
+    ) -> None:
         if not self.is_open:
             return
         self.holding_bars += 1
         self.peak_price = max(self.peak_price, high)
         self.trough_price = min(self.trough_price, low) if self.trough_price > 0 else low
+
+        if current_time is not None and self.entry_date is not None:
+            try:
+                c_date = current_time.date() if hasattr(current_time, 'date') else pd.to_datetime(current_time).date()
+                e_date = self.entry_date.date() if hasattr(self.entry_date, 'date') else pd.to_datetime(self.entry_date).date()
+                self.holding_days = max(0, (c_date - e_date).days)
+            except Exception:
+                self.holding_days = self.holding_bars
+        else:
+            self.holding_days = self.holding_bars
+
+    def can_exit(
+        self,
+        current_time: Any = None,
+        settlement_days: int = 1,
+        current_idx: Optional[int] = None,
+    ) -> bool:
+        """
+        合规出场判断（T+N合规）：
+        - 若 settlement_days == 0 (港股/美股 T+0)，开仓后即可平仓。
+        - 若 settlement_days >= 1 (A股 T+1):
+          1. 优先使用真实时间戳判断自然日换日跨度 (current_time.date() > entry_date.date())。
+             在 1m/15m/30m/60m 等日内 K 线回测中，彻底防止同一自然日内提前卖出。
+          2. 若无时间戳信息（纯数字索引 Mock 测试），回退为 (current_idx - entry_bar_idx) >= settlement_days。
+        """
+        if not self.is_open:
+            return False
+        if settlement_days <= 0:
+            return True
+
+        if current_time is not None and self.entry_date is not None:
+            try:
+                c_date = current_time.date() if hasattr(current_time, 'date') else pd.to_datetime(current_time).date()
+                e_date = self.entry_date.date() if hasattr(self.entry_date, 'date') else pd.to_datetime(self.entry_date).date()
+                return c_date > e_date
+            except Exception:
+                pass
+
+        if current_idx is not None and self.entry_bar_idx is not None:
+            return (current_idx - self.entry_bar_idx) >= settlement_days
+
+        return True
 
     def unrealized_pnl(self, current_price: float) -> float:
         if not self.is_open or self.avg_entry_price <= 0:
@@ -226,6 +315,7 @@ class TradeRecord:
     target_horizon: Optional[int] = None
     stop_pct: Optional[float] = None
     stop_price: Optional[float] = None
+    holding_bars: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -237,6 +327,7 @@ class TradeRecord:
             'pnl_pct': self.pnl_pct,
             'pnl_amt': self.pnl_amt,
             'holding_days': self.holding_days,
+            'holding_bars': self.holding_bars if self.holding_bars > 0 else self.holding_days,
             'reason': self.reason,
             'cash_balance': self.cash_balance,
             'entry_date': self.entry_date,
